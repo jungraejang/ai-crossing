@@ -10,6 +10,9 @@ export const AREA_TAGS = {
   HOME_3: 'home_3',
   HOME_4: 'home_4',
   HOME_5: 'home_5',
+  HOME_6: 'home_6',
+  HOME_7: 'home_7',
+  HOME_8: 'home_8',
   PATH: 'path',
   BRIDGE: 'bridge',
 } as const;

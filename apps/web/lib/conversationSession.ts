@@ -1,6 +1,6 @@
-import type { Villager, WorldState } from '@ai-crossing/shared';
+import type { Villager, WorldState, AgentThinkInput, AgentThinkResult } from '@ai-crossing/shared';
 import { useGameStore } from '@/stores/gameStore';
-import { getAgent, thinkQueue } from './villagerAgent';
+import { getAgent } from './villagerAgent';
 import { generateConversation } from './dialogueLines';
 
 const activeSessions: Map<string, ConversationSession> = new Map();
@@ -13,8 +13,7 @@ export class ConversationSession {
   private maxTurns: number;
   private currentTurn = 0;
   private isRunning = false;
-  private bubbleDurationMs = 3500;
-  private turnDelayMs = 2000;
+  private basePauseMs = 1500;
 
   constructor(villagerA: Villager, villagerB: Villager, maxTurns = 5) {
     this.agentAId = villagerA.profile.id;
@@ -79,38 +78,37 @@ export class ConversationSession {
 
       let context: string;
       if (i === 0) {
-        context = `You just ran into ${other.profile.name} at ${perception.currentLocation}. Start a conversation.`;
+        context = `You just ran into ${other.profile.name} (${other.profile.job}) at ${perception.currentLocation}. Start a conversation — say something only YOU would say. Be specific to this moment.`;
       } else {
         const lastLine = this.history[this.history.length - 1];
-        context = `You are talking with ${other.profile.name}. They just said: "${lastLine?.text ?? '...'}"`;
+        context = `You are chatting with ${other.profile.name}. They just said: "${lastLine?.text ?? '...'}" — respond naturally in your own voice.`;
         if (i >= this.maxTurns - 1) {
-          context += ' This is your last exchange — wrap up the conversation.';
+          context += ' Wrap up with a farewell that fits your personality.';
         }
       }
 
       const input = agent.buildThinkInput(villager, perception, context, this.history);
 
-      thinkQueue.setPriority(speakerId, 10);
-
-      let result;
+      let result: AgentThinkResult;
       try {
-        result = await thinkQueue.enqueue(speakerId, 10, input);
+        result = await callRemoteLLM(input);
       } catch {
         break;
       }
 
       if (result.action === 'end_conversation') {
-        if (result.speech) {
-          this.showBubble(speakerId, result.speech);
+        if (result.speech && result.speech.length > 2) {
+          const dur = this.showBubble(speakerId, result.speech);
           this.history.push({ speaker: villager.profile.name, text: result.speech });
-          await sleep(this.bubbleDurationMs);
+          await sleep(dur + this.basePauseMs);
         }
         break;
       }
 
-      const speech = result.speech ?? result.thought;
+      const speech = result.speech && result.speech.length > 2 ? result.speech : null;
+      let displayDuration = 0;
       if (speech) {
-        this.showBubble(speakerId, speech);
+        displayDuration = this.showBubble(speakerId, speech);
         this.history.push({ speaker: villager.profile.name, text: speech });
       }
 
@@ -133,12 +131,12 @@ export class ConversationSession {
         });
       }
 
-      await sleep(this.bubbleDurationMs + this.turnDelayMs);
+      await sleep(displayDuration + this.basePauseMs);
     }
   }
 
-  private showBubble(villagerId: string, text: string): void {
-    const duration = Math.max(2800, Math.min(5500, 1500 + text.length * 40));
+  private showBubble(villagerId: string, text: string): number {
+    const duration = Math.max(3000, Math.min(8000, 2000 + text.length * 55));
     useGameStore.getState().addSpeechBubble({
       id: `convo_${Date.now()}_${villagerId}`,
       villagerId,
@@ -146,6 +144,7 @@ export class ConversationSession {
       createdAt: Date.now(),
       expiresAt: Date.now() + duration,
     });
+    return duration;
   }
 
   private fallbackToTemplates(): void {
@@ -212,4 +211,15 @@ export function isInActiveConversation(villagerId: string): boolean {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function callRemoteLLM(input: AgentThinkInput): Promise<AgentThinkResult> {
+  const res = await fetch('/api/agent-converse', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+
+  if (!res.ok) throw new Error(`agent-converse API ${res.status}`);
+  return (await res.json()) as AgentThinkResult;
 }

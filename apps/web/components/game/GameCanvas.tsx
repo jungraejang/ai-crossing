@@ -1,31 +1,87 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { Application, Container, Graphics, Text, TextStyle } from 'pixi.js';
+import { Application, Container, Graphics, Text, TextStyle, Sprite, Assets, Texture } from 'pixi.js';
 import { useGameStore } from '@/stores/gameStore';
 import type { SpeechBubble } from '@/stores/gameStore';
 import { useUIStore } from '@/stores/uiStore';
 import { initializeGame } from '@/lib/initGame';
 import { MAP_DATA } from '@/lib/mapData';
 import { ACTION_LABELS } from '@ai-crossing/shared';
-import type { Villager } from '@ai-crossing/shared';
+import type { Villager, Direction } from '@ai-crossing/shared';
 
 const TILE = MAP_DATA.tileSize;
+const WALK_FRAME_COUNT = 4;
+const WALK_ANIM_SPEED = 150;
+
+const VILLAGER_IDS = [
+  'maple', 'jasper', 'luna', 'rowan', 'sage', 'felix',
+  'coral', 'finn', 'ivy', 'milo', 'pearl', 'otto',
+];
+
+const DIRECTION_MAP: Record<Direction, string> = {
+  down: 'south',
+  up: 'north',
+  left: 'west',
+  right: 'east',
+};
+
 const VILLAGER_COLORS: Record<string, number> = {
-  maple: 0xff6b6b,
-  jasper: 0x51cf66,
-  luna: 0x845ef7,
-  rowan: 0xff922b,
-  sage: 0x20c997,
-  felix: 0xfcc419,
+  maple: 0xff6b6b, jasper: 0x51cf66, luna: 0x845ef7, rowan: 0xff922b,
+  sage: 0x20c997, felix: 0xfcc419, coral: 0xf06595, finn: 0x339af0,
+  ivy: 0x2b8a3e, milo: 0xe67700, pearl: 0xda77f2, otto: 0x868e96,
 };
 
 const GROUND_COLORS: Record<number, number> = {
-  1: 0x4a7c59,
-  2: 0x3d6b4e,
-  3: 0x2980b9,
-  4: 0x8b6914,
+  1: 0x4a7c59, 2: 0x3d6b4e, 3: 0x2980b9, 4: 0x8b6914,
 };
+
+const spriteTextures: Record<string, Texture> = {};
+const walkTextures: Record<string, Texture[]> = {};
+let spritesLoaded = false;
+
+async function loadAllSprites() {
+  if (spritesLoaded) return;
+
+  const promises: Promise<void>[] = [];
+
+  for (const id of VILLAGER_IDS) {
+    for (const dir of ['south', 'north', 'east', 'west']) {
+      const key = `${id}_${dir}`;
+      promises.push(
+        Assets.load(`/sprites/${key}.png`).then((tex: Texture) => {
+          spriteTextures[key] = tex;
+        }).catch(() => {})
+      );
+
+      const walkKey = `${id}_walk_${dir}`;
+      walkTextures[walkKey] = [];
+      for (let f = 0; f < WALK_FRAME_COUNT; f++) {
+        promises.push(
+          Assets.load(`/sprites/${walkKey}_${f}.png`).then((tex: Texture) => {
+            if (!walkTextures[walkKey]) walkTextures[walkKey] = [];
+            walkTextures[walkKey]![f] = tex;
+          }).catch(() => {})
+        );
+      }
+    }
+  }
+
+  await Promise.all(promises);
+  spritesLoaded = true;
+}
+
+function getWalkFrame(villagerId: string, direction: string, timestamp: number): Texture | null {
+  const key = `${villagerId}_walk_${direction}`;
+  const frames = walkTextures[key];
+  if (!frames || frames.length === 0) return null;
+
+  const validFrames = frames.filter(Boolean);
+  if (validFrames.length === 0) return null;
+
+  const frameIndex = Math.floor(timestamp / WALK_ANIM_SPEED) % validFrames.length;
+  return validFrames[frameIndex] ?? null;
+}
 
 export default function GameCanvas() {
   const canvasRef = useRef<HTMLDivElement>(null);
@@ -67,6 +123,7 @@ export default function GameCanvas() {
       worldContainer.y = app.screen.height / 2 - (MAP_DATA.height * TILE) / 2;
 
       drawMap(worldContainer);
+      await loadAllSprites();
       initializeGame();
       setReady(true);
     })();
@@ -99,16 +156,16 @@ export default function GameCanvas() {
     const ticker = () => {
       const { villagers, speechBubbles } = useGameStore.getState();
       const { selectedVillagerId } = useUIStore.getState();
+      const now = Date.now();
 
       villagersContainer.removeChildren();
       labelsContainer.removeChildren();
       bubblesContainer.removeChildren();
 
       for (const v of villagers) {
-        drawVillager(villagersContainer, labelsContainer, v, v.profile.id === selectedVillagerId);
+        drawVillager(villagersContainer, labelsContainer, v, v.profile.id === selectedVillagerId, now);
       }
 
-      const now = Date.now();
       for (const bubble of speechBubbles) {
         if (now >= bubble.expiresAt) continue;
         if (now < bubble.createdAt) continue;
@@ -239,27 +296,48 @@ function drawVillager(
   labelsContainer: Container,
   villager: Villager,
   isSelected: boolean,
+  now: number,
 ) {
   const { x, y } = villager.state;
   const px = x * TILE;
   const py = y * TILE;
-  const color = VILLAGER_COLORS[villager.profile.id] ?? 0xffffff;
-
-  const g = new Graphics();
+  const id = villager.profile.id;
+  const facing = villager.state.facing;
+  const dirKey = DIRECTION_MAP[facing] ?? 'south';
+  const isWalking = villager.state.isMoving;
 
   if (isSelected) {
-    g.circle(px, py, TILE * 0.55).fill({ color: 0xffffff, alpha: 0.3 });
+    const selection = new Graphics();
+    selection.circle(px, py, TILE * 0.6).fill({ color: 0xffffff, alpha: 0.25 });
+    selection.circle(px, py, TILE * 0.6).stroke({ color: 0xffffff, width: 1, alpha: 0.5 });
+    container.addChild(selection);
   }
 
-  g.circle(px, py, TILE * 0.4).fill({ color });
-  g.circle(px, py, TILE * 0.4).stroke({ color: 0x000000, width: 1 });
+  let texture: Texture | null = null;
 
-  const eyeOffset = villager.state.facing === 'left' ? -3 : villager.state.facing === 'right' ? 3 : 0;
-  const eyeY = villager.state.facing === 'up' ? -4 : villager.state.facing === 'down' ? 2 : -1;
-  g.circle(px + eyeOffset - 3, py + eyeY, 2).fill({ color: 0x000000 });
-  g.circle(px + eyeOffset + 3, py + eyeY, 2).fill({ color: 0x000000 });
+  if (isWalking) {
+    texture = getWalkFrame(id, dirKey, now);
+  }
 
-  container.addChild(g);
+  if (!texture) {
+    texture = spriteTextures[`${id}_${dirKey}`] ?? null;
+  }
+
+  if (texture) {
+    const sprite = new Sprite(texture);
+    sprite.anchor.set(0.5, 0.5);
+    sprite.x = px;
+    sprite.y = py;
+    sprite.width = TILE * 1.4;
+    sprite.height = TILE * 1.4;
+    container.addChild(sprite);
+  } else {
+    const color = VILLAGER_COLORS[id] ?? 0xffffff;
+    const g = new Graphics();
+    g.circle(px, py, TILE * 0.4).fill({ color });
+    g.circle(px, py, TILE * 0.4).stroke({ color: 0x000000, width: 1 });
+    container.addChild(g);
+  }
 
   const nameStyle = new TextStyle({
     fontSize: 9,
@@ -269,7 +347,7 @@ function drawVillager(
   });
   const nameLabel = new Text({ text: villager.profile.name, style: nameStyle });
   nameLabel.x = px;
-  nameLabel.y = py - TILE * 0.7;
+  nameLabel.y = py - TILE * 0.85;
   nameLabel.anchor.set(0.5);
   labelsContainer.addChild(nameLabel);
 
@@ -282,7 +360,7 @@ function drawVillager(
     });
     const actionText = new Text({ text: actionLabel, style: actionStyle });
     actionText.x = px;
-    actionText.y = py + TILE * 0.65;
+    actionText.y = py + TILE * 0.8;
     actionText.anchor.set(0.5);
     labelsContainer.addChild(actionText);
   }
@@ -316,7 +394,7 @@ function drawSpeechBubble(
   const bubbleW = textWidth + padX * 2;
   const bubbleH = textHeight + padY * 2;
   const bubbleX = px - bubbleW / 2;
-  const bubbleY = py - TILE * 1.2 - bubbleH;
+  const bubbleY = py - TILE * 1.4 - bubbleH;
   const pointerSize = 5;
 
   const bg = new Graphics();

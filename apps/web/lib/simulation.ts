@@ -1,5 +1,5 @@
 import { useGameStore } from '@/stores/gameStore';
-import type { Villager, ActionType, GameEventLog } from '@ai-crossing/shared';
+import type { Villager, ActionType, GameEventLog, ScheduleBlock } from '@ai-crossing/shared';
 import {
   NEED_DECAY_RATES,
   NEED_THRESHOLDS,
@@ -8,7 +8,7 @@ import {
   AREA_TAGS,
 } from '@ai-crossing/shared';
 import { findPath } from '@ai-crossing/simulation';
-import { getAgent, getAllAgents } from './villagerAgent';
+import { getAgent } from './villagerAgent';
 import { startConversation, isInActiveConversation } from './conversationSession';
 
 let tickCounter = 0;
@@ -32,8 +32,8 @@ export function simulationTick(dt: number) {
     const inConvo = agent?.inConversation ?? false;
 
     if (!inConvo) {
-      runAgentTick(v, agent, totalGameMinutes);
-      state = { ...useGameStore.getState().villagers.find((u) => u.profile.id === v.profile.id)?.state ?? state };
+      state = enforceSchedule(v, state, world.time.hour);
+      runAgentFreeTime({ ...v, state }, agent, totalGameMinutes, world.time.hour);
       state = updateMovement(state, dt, world.speed);
       state = processAction(state, gameTimeDt);
     }
@@ -42,7 +42,6 @@ export function simulationTick(dt: number) {
   });
 
   updatedVillagers = applySeparation(updatedVillagers, dt);
-
   store.setVillagers(updatedVillagers);
 
   tickCounter++;
@@ -54,37 +53,179 @@ export function simulationTick(dt: number) {
   }
 }
 
-function runAgentTick(villager: Villager, agent: ReturnType<typeof getAgent>, totalGameMinutes: number) {
+function getScheduleBlock(villager: Villager, hour: number): ScheduleBlock | null {
+  return villager.profile.dailySchedule.find((b) => {
+    if (b.startHour <= b.endHour) {
+      return hour >= b.startHour && hour < b.endHour;
+    }
+    return hour >= b.startHour || hour < b.endHour;
+  }) ?? null;
+}
+
+type RoutineType = 'work' | 'sleep' | 'eat' | 'free';
+
+function classifyScheduleBlock(block: ScheduleBlock | null): RoutineType {
+  if (!block) return 'free';
+  if (block.action === 'sleeping') return 'sleep';
+  if (block.action === 'working') return 'work';
+  if (block.action === 'eating') return 'eat';
+  return 'free';
+}
+
+function enforceSchedule(
+  villager: Villager,
+  state: Villager['state'],
+  currentHour: number,
+): Villager['state'] {
+  if (state.isMoving) return state;
+
+  const currentAction = state.currentAction?.type;
+
+  if (currentAction === 'eating' || currentAction === 'sleeping' || currentAction === 'working') {
+    return state;
+  }
+
+  if (state.energy <= NEED_THRESHOLDS.energy.urgent) {
+    return enforceGoToAndDo(villager, state, villager.profile.homeId, 'sleeping', 60);
+  }
+
+  if (state.hunger >= NEED_THRESHOLDS.hunger.urgent) {
+    return startActionInPlace(state, 'eating', 15);
+  }
+
+  const block = getScheduleBlock(villager, currentHour);
+  const routine = classifyScheduleBlock(block);
+
+  if (routine === 'sleep') {
+    return enforceGoToAndDo(villager, state, villager.profile.homeId, 'sleeping', 60);
+  }
+
+  if (routine === 'work') {
+    const targetLoc = block!.locationId || villager.profile.homeId;
+    return enforceGoToAndDo(villager, state, targetLoc, 'working', 45);
+  }
+
+  if (routine === 'eat') {
+    const targetLoc = block!.locationId || villager.profile.homeId;
+    return enforceGoToAndDo(villager, state, targetLoc, 'eating', 15);
+  }
+
+  if (!currentAction || currentAction === 'idle') {
+    return applyFreeTimeFallback(villager, state, block);
+  }
+
+  return state;
+}
+
+function startActionInPlace(state: Villager['state'], type: ActionType, duration: number): Villager['state'] {
+  return { ...state, currentAction: { type, startedAt: Date.now(), duration, gameTimeElapsed: 0 } };
+}
+
+function enforceGoToAndDo(
+  villager: Villager,
+  state: Villager['state'],
+  targetLoc: string,
+  actionType: ActionType,
+  duration: number,
+): Villager['state'] {
+  if (state.currentLocation !== targetLoc && !state.isMoving) {
+    return {
+      ...state,
+      targetDestination: targetLoc,
+      currentAction: { type: 'idle', startedAt: Date.now(), duration: 0 },
+    };
+  }
+  if (state.currentLocation === targetLoc) {
+    if (state.currentAction?.type !== actionType) {
+      return { ...state, currentAction: { type: actionType, startedAt: Date.now(), duration, gameTimeElapsed: 0 } };
+    }
+  }
+  return state;
+}
+
+function applyFreeTimeFallback(
+  villager: Villager,
+  state: Villager['state'],
+  block: ScheduleBlock | null,
+): Villager['state'] {
+  if (state.hunger >= NEED_THRESHOLDS.hunger.high) {
+    return { ...state, currentAction: { type: 'eating', startedAt: Date.now(), duration: 15, gameTimeElapsed: 0 } };
+  }
+
+  if (state.sociability >= NEED_THRESHOLDS.sociability.high) {
+    const socialLoc = block?.locationId || AREA_TAGS.TOWN_SQUARE;
+    if (state.currentLocation !== socialLoc) {
+      return { ...state, targetDestination: socialLoc, currentAction: { type: 'idle', startedAt: Date.now(), duration: 0 } };
+    }
+    return { ...state, currentAction: { type: 'socializing', startedAt: Date.now(), duration: 10, gameTimeElapsed: 0 } };
+  }
+
+  if (state.boredom >= 50) {
+    return { ...state, currentAction: { type: 'wandering', startedAt: Date.now(), duration: 15, gameTimeElapsed: 0 } };
+  }
+
+  if (state.stress >= 40) {
+    return { ...state, currentAction: { type: 'resting', startedAt: Date.now(), duration: 20, gameTimeElapsed: 0 } };
+  }
+
+  if (block?.locationId && state.currentLocation !== block.locationId) {
+    return { ...state, targetDestination: block.locationId, currentAction: { type: 'idle', startedAt: Date.now(), duration: 0 } };
+  }
+
+  const freeActions: ActionType[] = ['wandering', 'resting', 'socializing'];
+  const pick = freeActions[Math.floor(Math.random() * freeActions.length)]!;
+  return { ...state, currentAction: { type: pick, startedAt: Date.now(), duration: 15, gameTimeElapsed: 0 } };
+}
+
+function runAgentFreeTime(
+  villager: Villager,
+  agent: ReturnType<typeof getAgent>,
+  totalGameMinutes: number,
+  currentHour: number,
+) {
   if (!agent) return;
+
+  const block = getScheduleBlock(villager, currentHour);
+  const routine = classifyScheduleBlock(block);
+  if (routine === 'work' || routine === 'sleep' || routine === 'eat') return;
+
   if (!agent.shouldThink(villager, totalGameMinutes)) return;
 
   const store = useGameStore.getState();
   const perception = agent.perceive(store.villagers, store.world, getRecentEventDescriptions());
 
-  let context = 'You are deciding what to do next.';
-  const actionType = villager.state.currentAction?.type;
-  if (actionType === 'idle' || !actionType) {
-    context = 'You just finished what you were doing and are now idle.';
-  } else if (actionType === 'walking') {
-    context = `You are walking to ${villager.state.targetDestination ?? 'somewhere'}.`;
-  }
+  const hobbies = villager.profile.likes.length > 0
+    ? `Your hobbies/interests: ${villager.profile.likes.join(', ')}.`
+    : '';
+
+  const timeLabel = currentHour < 12 ? 'morning' : currentHour < 17 ? 'afternoon' : 'evening';
+
+  let context = `You have free time right now. ${hobbies} It is ${timeLabel} (${currentHour}:00). Choose something enjoyable to do — visit a location, pursue a hobby, socialize, or explore the village. Don't just stand around!`;
 
   if (villager.state.hunger >= NEED_THRESHOLDS.hunger.high) {
-    context += ' You are getting hungry.';
+    context += ' You are getting hungry — consider eating.';
   }
   if (villager.state.energy <= NEED_THRESHOLDS.energy.high) {
-    context += ' You are getting tired.';
+    context += ' You are getting tired — consider resting.';
   }
   if (villager.state.sociability >= NEED_THRESHOLDS.sociability.high) {
-    context += ' You feel like socializing.';
+    context += ' You really want to talk to someone.';
+  }
+  if (villager.state.boredom >= 50) {
+    context += ' You are bored — do something fun!';
   }
 
   agent.think(villager, perception, totalGameMinutes, context).then((result) => {
     if (!result) return;
+    if (result.action === 'idle') return;
 
     const currentStore = useGameStore.getState();
     const currentVillager = currentStore.villagers.find((v) => v.profile.id === villager.profile.id);
     if (!currentVillager) return;
+
+    const block2 = getScheduleBlock(currentVillager, currentStore.world.time.hour);
+    const routine2 = classifyScheduleBlock(block2);
+    if (routine2 === 'work' || routine2 === 'sleep' || routine2 === 'eat') return;
 
     const stateUpdates = agent.act(currentVillager, result);
     if (stateUpdates) {
@@ -94,6 +235,23 @@ function runAgentTick(villager: Villager, agent: ReturnType<typeof getAgent>, to
     agent.reflect(result, currentVillager);
   });
 }
+
+const LOCATION_LABELS: Record<string, string> = {
+  [AREA_TAGS.TOWN_SQUARE]: 'Town Square',
+  [AREA_TAGS.CAFE]: 'Café',
+  [AREA_TAGS.STORE]: 'General Store',
+  [AREA_TAGS.GARDEN]: 'Garden',
+  [AREA_TAGS.LAKE]: 'Lake',
+  [AREA_TAGS.WORKSHOP]: 'Workshop',
+  [AREA_TAGS.HOME_1]: 'Home',
+  [AREA_TAGS.HOME_2]: 'Home',
+  [AREA_TAGS.HOME_3]: 'Home',
+  [AREA_TAGS.HOME_4]: 'Home',
+  [AREA_TAGS.HOME_5]: 'Home',
+  [AREA_TAGS.HOME_6]: 'Home',
+  [AREA_TAGS.HOME_7]: 'Home',
+  [AREA_TAGS.HOME_8]: 'Home',
+};
 
 function getRecentEventDescriptions(): string[] {
   const store = useGameStore.getState();
@@ -207,7 +365,7 @@ function processAction(
   const action = state.currentAction;
   if (!action || action.type === 'idle' || action.type === 'walking') return state;
 
-  const gameMinutesElapsed = (action.gameTimeElapsed ?? 0) + gameTimeDt * 2;
+  const gameMinutesElapsed = (action.gameTimeElapsed ?? 0) + gameTimeDt;
   const durationMinutes = action.duration;
 
   if (durationMinutes > 0 && gameMinutesElapsed >= durationMinutes) {
@@ -281,7 +439,6 @@ function applySeparation(villagers: Villager[], dt: number): Villager[] {
 function checkEncounters(villagers: Villager[]) {
   const store = useGameStore.getState();
   const now = Date.now();
-  const cooldownMs = 20000;
 
   for (let i = 0; i < villagers.length; i++) {
     for (let j = i + 1; j < villagers.length; j++) {
@@ -296,7 +453,14 @@ function checkEncounters(villagers: Villager[]) {
       const dy = a.state.y - b.state.y;
       const dist = Math.sqrt(dx * dx + dy * dy);
 
-      if (dist < 4) {
+      const sameLocation = a.state.currentLocation === b.state.currentLocation
+        && a.state.currentLocation !== '';
+
+      const interactionRange = sameLocation ? 8 : 3;
+
+      if (dist < interactionRange) {
+        const cooldownMs = sameLocation ? 8000 : 15000;
+
         const pairKey = [a.profile.id, b.profile.id].sort().join(':');
         const lastTime = lastEncounterCheck[pairKey] ?? 0;
         if (now - lastTime < cooldownMs) continue;
@@ -304,10 +468,12 @@ function checkEncounters(villagers: Villager[]) {
 
         const avgSociability = (a.state.sociability + b.state.sociability) / 2;
         const relA = a.state.relationshipMap[b.profile.id] ?? 0;
-        let interactChance = avgSociability / 150;
-        if (relA > 20) interactChance += 0.1;
+
+        let interactChance = avgSociability / 120;
+        if (sameLocation) interactChance += 0.25;
+        if (relA > 20) interactChance += 0.15;
         if (relA < -20) interactChance -= 0.1;
-        interactChance = Math.max(0.05, Math.min(0.7, interactChance));
+        interactChance = Math.max(0.05, Math.min(0.85, interactChance));
 
         if (Math.random() < interactChance) {
           startConversation(a, b);
@@ -324,12 +490,8 @@ function checkEncounters(villagers: Villager[]) {
             realTimestamp: now,
           });
 
-          store.updateVillager(a.profile.id, {
-            sociability: Math.max(0, a.state.sociability - 20),
-          });
-          store.updateVillager(b.profile.id, {
-            sociability: Math.max(0, b.state.sociability - 20),
-          });
+          store.updateVillager(a.profile.id, { sociability: Math.max(0, a.state.sociability - 20) });
+          store.updateVillager(b.profile.id, { sociability: Math.max(0, b.state.sociability - 20) });
         }
       }
     }
@@ -351,6 +513,9 @@ const locationPositions: Record<string, Array<{ x: number; y: number }>> = {
   [AREA_TAGS.HOME_3]: [{ x: 5, y: 19 }, { x: 6, y: 19 }, { x: 7, y: 19 }],
   [AREA_TAGS.HOME_4]: [{ x: 23, y: 19 }, { x: 24, y: 19 }, { x: 25, y: 19 }],
   [AREA_TAGS.HOME_5]: [{ x: 31, y: 19 }, { x: 32, y: 19 }, { x: 33, y: 19 }],
+  [AREA_TAGS.HOME_6]: [{ x: 21, y: 4 }, { x: 22, y: 4 }, { x: 23, y: 4 }],
+  [AREA_TAGS.HOME_7]: [{ x: 35, y: 4 }, { x: 36, y: 4 }, { x: 37, y: 4 }],
+  [AREA_TAGS.HOME_8]: [{ x: 35, y: 13 }, { x: 36, y: 13 }, { x: 37, y: 13 }],
 };
 
 function getLocationCoords(locationId: string): { x: number; y: number } | null {

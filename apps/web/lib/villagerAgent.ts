@@ -12,10 +12,13 @@ const LOCATION_LABELS: Record<string, string> = {
   [AREA_TAGS.LAKE]: 'Lake',
   [AREA_TAGS.WORKSHOP]: 'Workshop',
   [AREA_TAGS.HOME_1]: "Maple's Home",
-  [AREA_TAGS.HOME_2]: "Jasper's Home",
+  [AREA_TAGS.HOME_2]: "Jasper & Ivy's Home",
   [AREA_TAGS.HOME_3]: "Luna & Felix's Home",
-  [AREA_TAGS.HOME_4]: "Rowan's Home",
-  [AREA_TAGS.HOME_5]: "Sage's Home",
+  [AREA_TAGS.HOME_4]: "Rowan & Pearl's Home",
+  [AREA_TAGS.HOME_5]: "Sage & Otto's Home",
+  [AREA_TAGS.HOME_6]: "Coral's Home",
+  [AREA_TAGS.HOME_7]: "Finn's Home",
+  [AREA_TAGS.HOME_8]: "Milo's Home",
 };
 
 const AVAILABLE_ACTIONS = [
@@ -60,7 +63,7 @@ export class VillagerAgent {
   readonly episodicMemory: EpisodicMemoryStore;
 
   private lastThinkGameMinute = -1;
-  private thinkCooldownGameMinutes = 30;
+  private thinkCooldownGameMinutes = 60;
   private isThinking = false;
   private currentIntention: string = '';
   private planItems: string[] = [];
@@ -121,7 +124,7 @@ export class VillagerAgent {
     if (villager.state.hunger >= NEED_THRESHOLDS.hunger.urgent && this.lastAction !== 'eat') return true;
     if (villager.state.energy <= NEED_THRESHOLDS.energy.urgent && this.lastAction !== 'sleep') return true;
 
-    if (totalGameMinutes - this.lastThinkGameMinute >= this.thinkCooldownGameMinutes * 2) {
+    if (totalGameMinutes - this.lastThinkGameMinute >= this.thinkCooldownGameMinutes * 3) {
       return true;
     }
 

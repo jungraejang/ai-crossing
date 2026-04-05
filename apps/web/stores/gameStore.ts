@@ -68,7 +68,7 @@ export const useGameStore = create<GameState>((set) => ({
   advanceTime: (dt) =>
     set((s) => {
       const { time, speed } = s.world;
-      const gameMinutesPerSecond = 2 * speed;
+      const gameMinutesPerSecond = 1 * speed;
       const addedMinutes = dt * gameMinutesPerSecond;
       const prevTotalMinutes = time.hour * 60 + (time.minuteFrac ?? time.minute);
       let totalMinutes = prevTotalMinutes + addedMinutes;

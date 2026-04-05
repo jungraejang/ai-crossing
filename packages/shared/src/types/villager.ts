@@ -44,7 +44,13 @@ export type VillagerJob =
   | 'shopkeeper'
   | 'carpenter'
   | 'herbalist'
-  | 'musician';
+  | 'musician'
+  | 'fisher'
+  | 'librarian'
+  | 'blacksmith'
+  | 'painter'
+  | 'guard'
+  | 'cook';
 
 export type Mood =
   | 'happy'

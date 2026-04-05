@@ -19,6 +19,9 @@ const BUILDING_DEFS: BuildingDef[] = [
   { x: 13, y: 18, w: 4, h: 3, openInterior: true },   // Café
   { x: 22, y: 18, w: 4, h: 3, openInterior: true },   // Home 4
   { x: 30, y: 18, w: 4, h: 3, openInterior: true },   // Home 5
+  { x: 20, y: 3, w: 4, h: 3, openInterior: true },    // Home 6
+  { x: 34, y: 3, w: 4, h: 3, openInterior: true },    // Home 7
+  { x: 34, y: 12, w: 4, h: 3, openInterior: true },   // Home 8
 ];
 
 function generateCollision(): number[][] {
@@ -114,5 +117,8 @@ export const MAP_DATA = {
     { id: 'cafe', label: 'Café', x: 13, y: 18, w: 4, h: 3, color: 0xb22222 },
     { id: 'home_4', label: 'Home 4', x: 22, y: 18, w: 4, h: 3, color: 0xd2691e },
     { id: 'home_5', label: 'Home 5', x: 30, y: 18, w: 4, h: 3, color: 0x8fbc8f },
+    { id: 'home_6', label: 'Home 6', x: 20, y: 3, w: 4, h: 3, color: 0x6a5acd },
+    { id: 'home_7', label: 'Home 7', x: 34, y: 3, w: 4, h: 3, color: 0xbc8f8f },
+    { id: 'home_8', label: 'Home 8', x: 34, y: 12, w: 4, h: 3, color: 0x5f9ea0 },
   ],
 };
