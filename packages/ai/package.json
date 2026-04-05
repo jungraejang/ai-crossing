@@ -1,0 +1,18 @@
+{
+  "name": "@ai-crossing/ai",
+  "version": "0.0.1",
+  "private": true,
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "build": "tsc",
+    "lint": "eslint src/"
+  },
+  "dependencies": {
+    "@ai-crossing/shared": "workspace:*",
+    "zod": "^3"
+  },
+  "devDependencies": {
+    "typescript": "^5.7"
+  }
+}

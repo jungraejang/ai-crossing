@@ -1,0 +1,22 @@
+{
+  "name": "ai-crossing",
+  "private": true,
+  "scripts": {
+    "dev": "turbo dev",
+    "build": "turbo build",
+    "lint": "turbo lint",
+    "db:push": "turbo db:push --filter=@ai-crossing/db",
+    "db:generate": "turbo db:generate --filter=@ai-crossing/db",
+    "seed": "tsx tools/seed/index.ts"
+  },
+  "devDependencies": {
+    "turbo": "^2",
+    "typescript": "^5.7",
+    "prettier": "^3",
+    "@types/node": "^22"
+  },
+  "packageManager": "pnpm@9.15.0",
+  "engines": {
+    "node": ">=20"
+  }
+}

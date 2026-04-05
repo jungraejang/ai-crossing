@@ -1,0 +1,32 @@
+{
+  "name": "@ai-crossing/web",
+  "version": "0.0.1",
+  "private": true,
+  "scripts": {
+    "dev": "next dev --turbopack",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "@ai-crossing/shared": "workspace:*",
+    "@ai-crossing/ai": "workspace:*",
+    "@ai-crossing/simulation": "workspace:*",
+    "@ai-crossing/db": "workspace:*",
+    "@pixi/react": "^8",
+    "pixi.js": "^8",
+    "next": "^15",
+    "react": "^19",
+    "react-dom": "^19",
+    "zustand": "^5",
+    "zod": "^3"
+  },
+  "devDependencies": {
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "typescript": "^5.7",
+    "tailwindcss": "^4",
+    "@tailwindcss/postcss": "^4",
+    "postcss": "^8"
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "name": "@ai-crossing/seed",
+  "version": "0.0.1",
+  "private": true,
+  "dependencies": {
+    "@ai-crossing/shared": "workspace:*",
+    "@ai-crossing/db": "workspace:*"
+  },
+  "devDependencies": {
+    "tsx": "^4",
+    "typescript": "^5.7"
+  }
+}

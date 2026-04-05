@@ -1,0 +1,18 @@
+{
+  "name": "@ai-crossing/simulation",
+  "version": "0.0.1",
+  "private": true,
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "build": "tsc",
+    "lint": "eslint src/"
+  },
+  "dependencies": {
+    "@ai-crossing/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "typescript": "^5.7"
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "name": "@ai-crossing/worker",
+  "version": "0.0.1",
+  "private": true,
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "lint": "eslint src/"
+  },
+  "dependencies": {
+    "@ai-crossing/shared": "workspace:*",
+    "@ai-crossing/ai": "workspace:*",
+    "@ai-crossing/simulation": "workspace:*",
+    "@ai-crossing/db": "workspace:*",
+    "ioredis": "^5"
+  },
+  "devDependencies": {
+    "tsx": "^4",
+    "typescript": "^5.7",
+    "@types/node": "^22"
+  }
+}
