@@ -114,6 +114,10 @@ export class VillagerAgent {
     };
   }
 
+  requestThink(): void {
+    this.lastThinkGameMinute = -9999;
+  }
+
   shouldThink(villager: Villager, totalGameMinutes: number): boolean {
     if (this.isThinking) return false;
     if (this.inConversation) return false;
@@ -209,6 +213,8 @@ export class VillagerAgent {
       'home': villager.profile.homeId,
     };
 
+    const currentAction = villager.state.currentAction?.type;
+
     switch (result.action) {
       case 'move_to': {
         const target = result.target?.toLowerCase() ?? '';
@@ -222,10 +228,13 @@ export class VillagerAgent {
         return null;
       }
       case 'eat':
+        if (currentAction === 'eating') return null;
         return { currentAction: { type: 'eating', startedAt: Date.now(), duration: 15, gameTimeElapsed: 0 } };
       case 'work':
+        if (currentAction === 'working') return null;
         return { currentAction: { type: 'working', startedAt: Date.now(), duration: 45, gameTimeElapsed: 0 } };
       case 'rest':
+        if (currentAction === 'resting') return null;
         return { currentAction: { type: 'resting', startedAt: Date.now(), duration: 20, gameTimeElapsed: 0 } };
       case 'sleep':
         return {
@@ -233,8 +242,10 @@ export class VillagerAgent {
           currentAction: { type: 'idle', startedAt: Date.now(), duration: 0 },
         };
       case 'wander':
+        if (currentAction === 'wandering') return null;
         return { currentAction: { type: 'wandering', startedAt: Date.now(), duration: 15, gameTimeElapsed: 0 } };
       case 'socialize':
+        if (currentAction === 'socializing') return null;
         return { currentAction: { type: 'socializing', startedAt: Date.now(), duration: 10, gameTimeElapsed: 0 } };
       case 'speak': {
         if (result.speech) {

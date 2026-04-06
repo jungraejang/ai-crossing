@@ -2,14 +2,14 @@
 
 A browser-based pixel art village simulation with AI-powered villagers.
 
-6–12 villagers live on a small map, following schedules, socializing, and responding to the player — with dialogue powered by a local LLM via Ollama.
+6–12 villagers live on a small map, following schedules, socializing, and responding to the player — with dialogue powered by a local LLM via LM Studio.
 
 ## Stack
 
 - **Frontend**: Next.js 15 (App Router), React 19, Tailwind CSS v4
 - **Rendering**: PixiJS v8 — procedural pixel-art-style tile map
 - **State**: Zustand for client game state
-- **AI**: Ollama (local LLM) with provider abstraction for OpenAI/Anthropic
+- **AI**: LM Studio (local LLM) with provider abstraction for OpenAI-compatible endpoints
 - **Database**: PostgreSQL via Drizzle ORM
 - **Monorepo**: Turborepo + pnpm workspaces
 
@@ -19,7 +19,7 @@ A browser-based pixel art village simulation with AI-powered villagers.
 
 - Node.js 20+
 - pnpm 9+
-- [Ollama](https://ollama.com/) installed and running
+- [LM Studio](https://lmstudio.ai/) installed and running with the local server enabled
 - PostgreSQL (optional — needed for persistence features)
 
 ### Setup
@@ -28,8 +28,8 @@ A browser-based pixel art village simulation with AI-powered villagers.
 # Install dependencies
 pnpm install
 
-# Pull an Ollama model for dialogue
-ollama pull llama3.1:8b
+# Start LM Studio local server and load a chat model
+# Example local server: http://127.0.0.1:1234
 
 # Start the dev server
 pnpm dev
@@ -44,7 +44,7 @@ Open [http://localhost:3000](http://localhost:3000) to see the village.
 - **Scroll** to zoom
 - **Pause / 1x / 4x / 16x** speed controls in the header
 - **Debug** button toggles the debug overlay
-- **Chat** panel appears when a villager is selected (requires Ollama running)
+- **Chat** panel appears when a villager is selected (requires LM Studio local server running)
 - Inspector page at [/inspector](http://localhost:3000/inspector) for debug tools
 
 ## Project Structure
@@ -77,9 +77,9 @@ Copy `.env.local` and configure:
 ```
 DATABASE_URL=postgresql://postgres:postgres@localhost:5432/ai_crossing
 REDIS_URL=redis://localhost:6379
-OLLAMA_URL=http://localhost:11434
-AI_PROVIDER=ollama
-OLLAMA_MODEL=llama3.1:8b
+LMSTUDIO_URL=http://127.0.0.1:1234
+AI_PROVIDER=lmstudio
+LMSTUDIO_MODEL=default
 ```
 
 ## Villagers

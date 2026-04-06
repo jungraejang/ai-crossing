@@ -3,7 +3,6 @@ import type { Villager, ActionType, GameEventLog, ScheduleBlock } from '@ai-cros
 import {
   NEED_DECAY_RATES,
   NEED_THRESHOLDS,
-  NEED_RECOVERY,
   MOVEMENT_SPEED_TILES_PER_SECOND,
   AREA_TAGS,
 } from '@ai-crossing/shared';
@@ -13,6 +12,7 @@ import { startConversation, isInActiveConversation } from './conversationSession
 
 let tickCounter = 0;
 let lastEncounterCheck: Record<string, number> = {};
+const mealCooldownUntil: Map<string, number> = new Map();
 
 export function simulationTick(dt: number) {
   const store = useGameStore.getState();
@@ -32,11 +32,26 @@ export function simulationTick(dt: number) {
     const inConvo = agent?.inConversation ?? false;
 
     if (!inConvo) {
-      state = enforceSchedule(v, state, world.time.hour);
+      const prevAction = state.currentAction?.type;
+      state = enforceSchedule(v, state, world.time.hour, totalGameMinutes);
       runAgentFreeTime({ ...v, state }, agent, totalGameMinutes, world.time.hour);
       state = updateMovement(state, dt, world.speed);
-      state = processAction(state, gameTimeDt);
       state = workplaceFidget(v.profile.id, state, dt, world.speed);
+
+      if (prevAction && prevAction !== 'idle' && prevAction !== 'walking' && state.currentAction?.type === 'idle') {
+        agent?.requestThink();
+      }
+    }
+
+    const prevActionAfterBehavior = state.currentAction?.type;
+    state = processAction(v.profile.id, state, gameTimeDt, totalGameMinutes);
+    if (
+      prevActionAfterBehavior &&
+      prevActionAfterBehavior !== 'idle' &&
+      prevActionAfterBehavior !== 'walking' &&
+      state.currentAction?.type === 'idle'
+    ) {
+      agent?.requestThink();
     }
 
     return { ...v, state };
@@ -67,6 +82,16 @@ function pruneEncounterCache() {
   }
 }
 
+function hasRecentMeal(villagerId: string, totalGameMinutes: number): boolean {
+  const until = mealCooldownUntil.get(villagerId);
+  if (until === undefined) return false;
+  if (totalGameMinutes >= until) {
+    mealCooldownUntil.delete(villagerId);
+    return false;
+  }
+  return true;
+}
+
 function getScheduleBlock(villager: Villager, hour: number): ScheduleBlock | null {
   return villager.profile.dailySchedule.find((b) => {
     if (b.startHour <= b.endHour) {
@@ -90,6 +115,7 @@ function enforceSchedule(
   villager: Villager,
   state: Villager['state'],
   currentHour: number,
+  totalGameMinutes: number,
 ): Villager['state'] {
   if (state.isMoving) return state;
 
@@ -99,29 +125,17 @@ function enforceSchedule(
     return state;
   }
   if (currentAction === 'eating') {
-    const elapsed = state.currentAction?.gameTimeElapsed ?? 0;
-    const dur = state.currentAction?.duration ?? 0;
-    if (state.hunger <= 20 || (dur > 0 && elapsed >= dur)) {
-      return { ...state, currentAction: { type: 'idle', startedAt: Date.now(), duration: 0 } };
-    }
     return state;
   }
   if (currentAction === 'wandering' || currentAction === 'socializing' || currentAction === 'resting' || currentAction === 'shopping' || currentAction === 'crafting') {
-    const elapsed = state.currentAction?.gameTimeElapsed ?? 0;
-    const duration = state.currentAction?.duration ?? 0;
-    if (duration > 0 && elapsed < duration) {
-      if (state.hunger >= NEED_THRESHOLDS.hunger.urgent || state.energy <= NEED_THRESHOLDS.energy.urgent) {
-        return { ...state, currentAction: { type: 'idle', startedAt: Date.now(), duration: 0 } };
-      }
-      return state;
-    }
+    return state;
   }
 
   if (state.energy <= NEED_THRESHOLDS.energy.urgent) {
     return enforceGoToAndDo(villager, state, villager.profile.homeId, 'sleeping', 60);
   }
 
-  if (state.hunger >= NEED_THRESHOLDS.hunger.urgent) {
+  if (state.hunger >= NEED_THRESHOLDS.hunger.urgent && !hasRecentMeal(villager.profile.id, totalGameMinutes)) {
     const eatLoc = canEatHere(state.currentLocation, villager.profile.homeId)
       ? state.currentLocation
       : pickEatLocation(villager.profile.homeId);
@@ -141,16 +155,16 @@ function enforceSchedule(
   }
 
   if (routine === 'eat') {
-    if (state.hunger >= 50) {
+    if (state.hunger >= 50 && !hasRecentMeal(villager.profile.id, totalGameMinutes)) {
       const targetLoc = block!.locationId || villager.profile.homeId;
       const eatLoc = canEatHere(targetLoc, villager.profile.homeId) ? targetLoc : pickEatLocation(villager.profile.homeId);
       return enforceGoToAndDo(villager, state, eatLoc, 'eating', 15);
     }
-    return applyFreeTimeFallback(villager, state, block);
+    return applyFreeTimeFallback(villager, state, block, totalGameMinutes);
   }
 
   if (!currentAction || currentAction === 'idle') {
-    return applyFreeTimeFallback(villager, state, block);
+    return applyFreeTimeFallback(villager, state, block, totalGameMinutes);
   }
 
   return state;
@@ -194,8 +208,9 @@ function applyFreeTimeFallback(
   villager: Villager,
   state: Villager['state'],
   block: ScheduleBlock | null,
+  totalGameMinutes: number,
 ): Villager['state'] {
-  if (state.hunger >= NEED_THRESHOLDS.hunger.high) {
+  if (state.hunger >= NEED_THRESHOLDS.hunger.high && !hasRecentMeal(villager.profile.id, totalGameMinutes)) {
     if (canEatHere(state.currentLocation, villager.profile.homeId)) {
       return { ...state, currentAction: { type: 'eating', startedAt: Date.now(), duration: 15, gameTimeElapsed: 0 } };
     }
@@ -278,6 +293,11 @@ function runAgentFreeTime(
     const routine2 = classifyScheduleBlock(block2);
     if (routine2 === 'work' || routine2 === 'sleep' || routine2 === 'eat') return;
 
+    const currentActionType = currentVillager.state.currentAction?.type;
+    if (currentActionType && currentActionType !== 'idle' && currentActionType !== 'walking') {
+      return;
+    }
+
     const stateUpdates = agent.act(currentVillager, result);
     if (stateUpdates) {
       currentStore.updateVillager(villager.profile.id, stateUpdates);
@@ -333,13 +353,57 @@ function decayNeeds(
   speed: number,
 ): Villager['state'] {
   const factor = dt * speed;
+  let hunger = state.hunger + NEED_DECAY_RATES.hunger * factor;
+  let energy = state.energy - NEED_DECAY_RATES.energy * factor;
+  let stress = state.stress + NEED_DECAY_RATES.stress * factor;
+  let boredom = state.boredom + NEED_DECAY_RATES.boredom * factor;
+  let sociability = state.sociability + NEED_DECAY_RATES.sociability * factor;
+
+  // Continuous recovery while actions are happening.
+  // This avoids the "stuck action means no recovery" failure mode and
+  // makes needs visibly change during the action.
+  switch (state.currentAction?.type) {
+    case 'eating':
+      // While eating, do not also passively get hungrier.
+      // A full meal should meaningfully lower the hunger need in one session.
+      hunger = state.hunger - 4.0 * factor;
+      energy += 0.25 * factor;
+      break;
+    case 'sleeping':
+      energy += 1.3 * factor;
+      stress -= 0.35 * factor;
+      break;
+    case 'resting':
+      energy += 0.5 * factor;
+      stress -= 0.45 * factor;
+      break;
+    case 'socializing':
+      sociability -= 0.9 * factor;
+      boredom -= 0.35 * factor;
+      stress -= 0.05 * factor;
+      break;
+    case 'wandering':
+      boredom -= 0.45 * factor;
+      stress -= 0.08 * factor;
+      energy -= 0.08 * factor;
+      break;
+    case 'working':
+      boredom -= 0.12 * factor;
+      stress += 0.08 * factor;
+      hunger += 0.12 * factor;
+      energy -= 0.18 * factor;
+      break;
+    default:
+      break;
+  }
+
   return {
     ...state,
-    hunger: Math.min(100, state.hunger + NEED_DECAY_RATES.hunger * factor),
-    energy: Math.max(0, state.energy - NEED_DECAY_RATES.energy * factor),
-    stress: Math.min(100, state.stress + NEED_DECAY_RATES.stress * factor),
-    boredom: Math.min(100, state.boredom + NEED_DECAY_RATES.boredom * factor),
-    sociability: Math.min(100, state.sociability + NEED_DECAY_RATES.sociability * factor),
+    hunger: Math.max(0, Math.min(100, hunger)),
+    energy: Math.max(0, Math.min(100, energy)),
+    stress: Math.max(0, Math.min(100, stress)),
+    boredom: Math.max(0, Math.min(100, boredom)),
+    sociability: Math.max(0, Math.min(100, sociability)),
   };
 }
 
@@ -414,8 +478,10 @@ function updateMovement(
 }
 
 function processAction(
+  villagerId: string,
   state: Villager['state'],
   gameTimeDt: number,
+  totalGameMinutes: number,
 ): Villager['state'] {
   const action = state.currentAction;
   if (!action || action.type === 'idle' || action.type === 'walking') return state;
@@ -424,20 +490,14 @@ function processAction(
   const durationMinutes = action.duration;
 
   if (durationMinutes > 0 && gameMinutesElapsed >= durationMinutes) {
-    const recovery = NEED_RECOVERY[action.type as keyof typeof NEED_RECOVERY];
-    if (recovery) {
-      const updated = { ...state };
-      for (const [key, value] of Object.entries(recovery)) {
-        if (key in updated && typeof (updated as Record<string, unknown>)[key] === 'number') {
-          const current = (updated as unknown as Record<string, number>)[key] ?? 0;
-          (updated as unknown as Record<string, number>)[key] = Math.max(0, Math.min(100, current + value));
-        }
-      }
-      updated.currentAction = { type: 'idle', startedAt: Date.now(), duration: 0 };
-      updated.mood = calculateMood(updated);
-      return updated;
+    const updated = { ...state };
+    if (action.type === 'eating') {
+      updated.hunger = Math.min(updated.hunger, 20);
+      mealCooldownUntil.set(villagerId, totalGameMinutes + 90);
     }
-    return { ...state, currentAction: { type: 'idle', startedAt: Date.now(), duration: 0 } };
+    updated.currentAction = { type: 'idle', startedAt: Date.now(), duration: 0 };
+    updated.mood = calculateMood(updated);
+    return updated;
   }
 
   return { ...state, currentAction: { ...action, gameTimeElapsed: gameMinutesElapsed } };
@@ -452,7 +512,10 @@ function workplaceFidget(
   speed: number,
 ): Villager['state'] {
   const action = state.currentAction?.type;
-  if (action !== 'working' && action !== 'eating' && action !== 'socializing') return state;
+  // Only workers should shuffle around their workplace.
+  // Moving eaters/socializers interrupts the action before `processAction`
+  // can apply recovery, which causes loops.
+  if (action !== 'working') return state;
   if (state.isMoving || state.path.length > 0) return state;
 
   const loc = state.currentLocation;
@@ -554,7 +617,12 @@ function checkEncounters(villagers: Villager[]) {
       const b = villagers[j]!;
 
       if (a.state.isMoving || b.state.isMoving) continue;
-      if (a.state.currentAction?.type === 'sleeping' || b.state.currentAction?.type === 'sleeping') continue;
+      if (
+        a.state.currentAction?.type === 'sleeping' ||
+        b.state.currentAction?.type === 'sleeping' ||
+        a.state.currentAction?.type === 'eating' ||
+        b.state.currentAction?.type === 'eating'
+      ) continue;
       if (isInActiveConversation(a.profile.id) || isInActiveConversation(b.profile.id)) continue;
 
       const dx = a.state.x - b.state.x;

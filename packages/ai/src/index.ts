@@ -1,4 +1,5 @@
 export { type LLMProvider } from './providers/base';
+export { LMStudioProvider } from './providers/lmstudio';
 export { OllamaProvider } from './providers/ollama';
 export { createProvider } from './providers/factory';
 export { buildDialoguePrompt } from './prompts/dialogue';

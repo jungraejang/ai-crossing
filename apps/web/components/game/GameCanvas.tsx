@@ -50,6 +50,57 @@ const GROUND_COLORS: Record<number, number> = {
   1: 0x4a7c59, 2: 0x3d6b4e, 3: 0x2980b9, 4: 0x8b6914,
 };
 
+let sleepTexture: Texture | null = null;
+let shadowTexture: Texture | null = null;
+
+function createSleepTexture(): Texture {
+  if (sleepTexture) return sleepTexture;
+  const canvas = document.createElement('canvas');
+  canvas.width = 48;
+  canvas.height = 24;
+  const ctx = canvas.getContext('2d')!;
+
+  const outline = '#222034';
+  const fill = '#f8f8f0';
+
+  const drawPixelZ = (x: number, y: number, s: number) => {
+    ctx.fillStyle = outline;
+    ctx.fillRect(x, y, s * 4, s);
+    ctx.fillRect(x + s * 3, y + s, s, s);
+    ctx.fillRect(x + s * 2, y + s * 2, s, s);
+    ctx.fillRect(x + s, y + s * 3, s, s);
+    ctx.fillRect(x, y + s * 4, s * 4, s);
+
+    ctx.fillStyle = fill;
+    ctx.fillRect(x + s, y + 1, s * 2, s - 2);
+    ctx.fillRect(x + s * 3, y + s + 1, s - 1, s - 2);
+    ctx.fillRect(x + s * 2, y + s * 2 + 1, s - 1, s - 2);
+    ctx.fillRect(x + s, y + s * 3 + 1, s - 1, s - 2);
+    ctx.fillRect(x + s, y + s * 4 + 1, s * 2, s - 2);
+  };
+
+  drawPixelZ(2, 10, 2);
+  drawPixelZ(16, 5, 2);
+  drawPixelZ(30, 1, 2);
+
+  sleepTexture = Texture.from(canvas);
+  return sleepTexture;
+}
+
+function createShadowTexture(): Texture {
+  if (shadowTexture) return shadowTexture;
+  const canvas = document.createElement('canvas');
+  canvas.width = 48;
+  canvas.height = 20;
+  const ctx = canvas.getContext('2d')!;
+  ctx.fillStyle = 'rgba(0,0,0,0.2)';
+  ctx.beginPath();
+  ctx.ellipse(24, 10, 18, 6, 0, 0, Math.PI * 2);
+  ctx.fill();
+  shadowTexture = Texture.from(canvas);
+  return shadowTexture;
+}
+
 const spriteTextures: Record<string, Texture> = {};
 const walkTextures: Record<string, Texture[]> = {};
 const tilesetTextures: Record<string, Texture> = {};
@@ -224,6 +275,7 @@ export default function GameCanvas() {
 
     const bldgSprites: Map<string, Sprite> = new Map();
     const bldgLabels: Map<string, Text> = new Map();
+    const bldgOccupiedState: Map<string, boolean> = new Map();
     for (const b of MAP_DATA.buildings) {
       const tex = buildingTextures[b.id];
       if (tex) {
@@ -239,9 +291,22 @@ export default function GameCanvas() {
       lbl.anchor.set(0.5, 0);
       buildingsContainer.addChild(lbl);
       bldgLabels.set(b.id, lbl);
+      bldgOccupiedState.set(b.id, false);
     }
 
-    const vPool: Map<string, { shadow: Graphics; sprite: Sprite; fallback: Graphics; nameLabel: Text; actionLabel: Text; selectionRing: Graphics }> = new Map();
+    const vPool: Map<
+      string,
+      {
+        shadow: Sprite;
+        sprite: Sprite;
+        fallback: Graphics;
+        nameLabel: Text;
+        actionLabel: Text;
+        selectionRing: Graphics;
+        sleepSprite: Sprite;
+      }
+    > = new Map();
+    let lastLightingHour = -1;
 
     const ticker = () => {
       const { villagers, speechBubbles, world: worldState } = useGameStore.getState();
@@ -250,19 +315,27 @@ export default function GameCanvas() {
 
       for (const b of MAP_DATA.buildings) {
         const hasInside = villagers.some((v) => v.state.x >= b.x && v.state.x < b.x + b.w && v.state.y >= b.y && v.state.y < b.y + b.h);
-        const s = bldgSprites.get(b.id);
-        if (s) s.alpha = hasInside ? 0.35 : 0.9;
-        const lbl = bldgLabels.get(b.id);
-        if (lbl) lbl.alpha = hasInside ? 0.5 : 1;
+        const prev = bldgOccupiedState.get(b.id);
+        if (prev !== hasInside) {
+          const s = bldgSprites.get(b.id);
+          if (s) s.alpha = hasInside ? 0.35 : 0.9;
+          const lbl = bldgLabels.get(b.id);
+          if (lbl) lbl.alpha = hasInside ? 0.5 : 1;
+          bldgOccupiedState.set(b.id, hasInside);
+        }
       }
 
-      updateLighting(lightingOverlay, worldState.time.hour);
+      if (worldState.time.hour !== lastLightingHour) {
+        updateLighting(lightingOverlay, worldState.time.hour);
+        lastLightingHour = worldState.time.hour;
+      }
 
       for (const v of villagers) {
         const id = v.profile.id;
         let pool = vPool.get(id);
         if (!pool) {
-          const shadow = new Graphics();
+          const shadow = new Sprite(createShadowTexture());
+          shadow.anchor.set(0.5);
           villagersContainer.addChild(shadow);
           const selectionRing = new Graphics();
           villagersContainer.addChild(selectionRing);
@@ -277,7 +350,11 @@ export default function GameCanvas() {
           const al = new Text({ text: '', style: cachedStyles.villagerAction });
           al.anchor.set(0.5);
           labelsContainer.addChild(al);
-          pool = { shadow, sprite: spr, fallback: fb, nameLabel: nl, actionLabel: al, selectionRing };
+          const sl = new Sprite(createSleepTexture());
+          sl.anchor.set(0.5);
+          sl.visible = false;
+          labelsContainer.addChild(sl);
+          pool = { shadow, sprite: spr, fallback: fb, nameLabel: nl, actionLabel: al, selectionRing, sleepSprite: sl };
           vPool.set(id, pool);
         }
 
@@ -286,8 +363,10 @@ export default function GameCanvas() {
         const dirKey = DIRECTION_MAP[v.state.facing] ?? 'south';
         const isSel = id === selectedVillagerId;
 
-        pool.shadow.clear();
-        pool.shadow.ellipse(px, py + TILE * 0.35, TILE * 0.35, TILE * 0.12).fill({ color: 0x000000, alpha: 0.2 });
+        pool.shadow.x = px;
+        pool.shadow.y = py + TILE * 0.35;
+        pool.shadow.width = TILE * 0.9;
+        pool.shadow.height = TILE * 0.35;
 
         pool.selectionRing.clear();
         if (isSel) {
@@ -324,6 +403,16 @@ export default function GameCanvas() {
           pool.actionLabel.visible = true;
         } else {
           pool.actionLabel.visible = false;
+        }
+
+        if (v.state.currentAction?.type === 'sleeping') {
+          const bob = Math.sin(now / 350 + px * 0.01) * 3;
+          pool.sleepSprite.x = px + 10;
+          pool.sleepSprite.y = py - TILE * 1.35 + bob;
+          pool.sleepSprite.alpha = 0.7 + 0.3 * Math.sin(now / 500 + px * 0.02);
+          pool.sleepSprite.visible = true;
+        } else {
+          pool.sleepSprite.visible = false;
         }
       }
 

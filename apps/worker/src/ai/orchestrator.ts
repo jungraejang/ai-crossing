@@ -12,10 +12,10 @@ export class AIOrchestrator {
   constructor(eventBus: EventBus) {
     this.eventBus = eventBus;
     this.provider = createProvider(
-      (process.env.AI_PROVIDER as 'ollama') || 'ollama',
+      (process.env.AI_PROVIDER as 'lmstudio') || 'lmstudio',
       {
-        baseUrl: process.env.OLLAMA_URL || 'http://localhost:11434',
-        model: process.env.OLLAMA_MODEL || 'llama3.1:8b',
+        baseUrl: process.env.LMSTUDIO_URL || 'http://127.0.0.1:1234',
+        model: process.env.LMSTUDIO_MODEL || 'default',
       },
     );
   }
