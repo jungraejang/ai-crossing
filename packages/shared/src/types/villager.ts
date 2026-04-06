@@ -50,7 +50,19 @@ export type VillagerJob =
   | 'blacksmith'
   | 'painter'
   | 'guard'
-  | 'cook';
+  | 'cook'
+  | 'tailor'
+  | 'miner'
+  | 'doctor'
+  | 'beekeeper'
+  | 'sailor'
+  | 'teacher'
+  | 'mason'
+  | 'florist'
+  | 'ranger'
+  | 'astronomer'
+  | 'potter'
+  | 'hunter';
 
 export type Mood =
   | 'happy'

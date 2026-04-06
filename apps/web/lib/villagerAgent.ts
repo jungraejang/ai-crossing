@@ -11,14 +11,18 @@ const LOCATION_LABELS: Record<string, string> = {
   [AREA_TAGS.GARDEN]: 'Garden',
   [AREA_TAGS.LAKE]: 'Lake',
   [AREA_TAGS.WORKSHOP]: 'Workshop',
-  [AREA_TAGS.HOME_1]: "Maple's Home",
+  [AREA_TAGS.HOME_1]: "Maple & Cinder's Home",
   [AREA_TAGS.HOME_2]: "Jasper & Ivy's Home",
-  [AREA_TAGS.HOME_3]: "Luna & Felix's Home",
+  [AREA_TAGS.HOME_3]: "Luna, Felix & Poppy's Home",
   [AREA_TAGS.HOME_4]: "Rowan & Pearl's Home",
   [AREA_TAGS.HOME_5]: "Sage & Otto's Home",
-  [AREA_TAGS.HOME_6]: "Coral's Home",
-  [AREA_TAGS.HOME_7]: "Finn's Home",
-  [AREA_TAGS.HOME_8]: "Milo's Home",
+  [AREA_TAGS.HOME_6]: "Coral & Dusk's Home",
+  [AREA_TAGS.HOME_7]: "Finn & Reed's Home",
+  [AREA_TAGS.HOME_8]: "Milo & Flint's Home",
+  [AREA_TAGS.HOME_9]: "Hazel & Cliff's Home",
+  [AREA_TAGS.HOME_10]: "Wren & Birch's Home",
+  [AREA_TAGS.HOME_11]: "Ember & Fern's Home",
+  [AREA_TAGS.HOME_12]: "Slate's Home",
 };
 
 const AVAILABLE_ACTIONS = [

@@ -1,7 +1,6 @@
-import type { Villager, WorldState, AgentThinkInput, AgentThinkResult } from '@ai-crossing/shared';
+import type { Villager, WorldState, AgentThinkInput, AgentThinkResult, Direction } from '@ai-crossing/shared';
 import { useGameStore } from '@/stores/gameStore';
 import { getAgent } from './villagerAgent';
-import { generateConversation } from './dialogueLines';
 
 const activeSessions: Map<string, ConversationSession> = new Map();
 
@@ -14,12 +13,14 @@ export class ConversationSession {
   private currentTurn = 0;
   private isRunning = false;
   private basePauseMs = 1500;
+  private workMode: boolean;
 
-  constructor(villagerA: Villager, villagerB: Villager, maxTurns = 5) {
+  constructor(villagerA: Villager, villagerB: Villager, maxTurns = 5, workMode = false) {
     this.agentAId = villagerA.profile.id;
     this.agentBId = villagerB.profile.id;
     this.sessionKey = [this.agentAId, this.agentBId].sort().join(':convo:');
-    this.maxTurns = maxTurns;
+    this.maxTurns = workMode ? 2 : maxTurns;
+    this.workMode = workMode;
   }
 
   async start(): Promise<void> {
@@ -41,6 +42,7 @@ export class ConversationSession {
     this.isRunning = true;
 
     const store = useGameStore.getState();
+    faceEachOther(store, this.agentAId, this.agentBId);
     store.addSpeechBubble({
       id: `convo_thinking_${this.agentAId}`,
       villagerId: this.agentAId,
@@ -52,8 +54,7 @@ export class ConversationSession {
     try {
       await this.runTurns();
     } catch (err) {
-      console.warn(`[Conversation] Session failed, falling back to templates:`, err);
-      this.fallbackToTemplates();
+      console.warn(`[Conversation] Session failed:`, err);
     } finally {
       this.end();
     }
@@ -77,13 +78,22 @@ export class ConversationSession {
       const perception = agent.perceive(store.villagers, store.world, []);
 
       let context: string;
-      if (i === 0) {
-        context = `You just ran into ${other.profile.name} (${other.profile.job}) at ${perception.currentLocation}. Start a conversation — say something only YOU would say. Be specific to this moment.`;
+      if (this.workMode) {
+        if (i === 0) {
+          context = `You are working alongside ${other.profile.name} (${other.profile.job}) at ${perception.currentLocation}. Say something SHORT and work-related — a quick request, observation about the task, or brief comment about the work. One short sentence only. Do NOT start a full conversation, just a quick work exchange.`;
+        } else {
+          const lastLine = this.history[this.history.length - 1];
+          context = `${other.profile.name} just said while working: "${lastLine?.text ?? '...'}" — give a quick work-related reply. One short sentence. Keep working.`;
+        }
       } else {
-        const lastLine = this.history[this.history.length - 1];
-        context = `You are chatting with ${other.profile.name}. They just said: "${lastLine?.text ?? '...'}" — respond naturally in your own voice.`;
-        if (i >= this.maxTurns - 1) {
-          context += ' Wrap up with a farewell that fits your personality.';
+        if (i === 0) {
+          context = `You just ran into ${other.profile.name} (${other.profile.job}) at ${perception.currentLocation}. Start a conversation — say something only YOU would say. Be specific to this moment.`;
+        } else {
+          const lastLine = this.history[this.history.length - 1];
+          context = `You are chatting with ${other.profile.name}. They just said: "${lastLine?.text ?? '...'}" — respond naturally in your own voice.`;
+          if (i >= this.maxTurns - 1) {
+            context += ' Wrap up with a farewell that fits your personality.';
+          }
         }
       }
 
@@ -147,34 +157,6 @@ export class ConversationSession {
     return duration;
   }
 
-  private fallbackToTemplates(): void {
-    const store = useGameStore.getState();
-    const a = store.villagers.find((v) => v.profile.id === this.agentAId);
-    const b = store.villagers.find((v) => v.profile.id === this.agentBId);
-    if (!a || !b) return;
-
-    const turns = generateConversation(a, b, 'small_talk');
-    const now = Date.now();
-    const delayBetween = 2800;
-
-    for (let i = 0; i < turns.length; i++) {
-      const turn = turns[i]!;
-      const delay = i * delayBetween;
-      const showAt = now + delay;
-      const bubbleDuration = Math.max(2500, Math.min(5000, 1500 + turn.text.length * 40));
-
-      setTimeout(() => {
-        useGameStore.getState().addSpeechBubble({
-          id: `fallback_convo_${showAt}_${turn.speaker}`,
-          villagerId: turn.speaker,
-          text: turn.text,
-          createdAt: showAt,
-          expiresAt: showAt + bubbleDuration,
-        });
-      }, delay);
-    }
-  }
-
   private end(): void {
     const agentA = getAgent(this.agentAId);
     const agentB = getAgent(this.agentBId);
@@ -191,7 +173,7 @@ export class ConversationSession {
   }
 }
 
-export function startConversation(villagerA: Villager, villagerB: Villager): void {
+export function startConversation(villagerA: Villager, villagerB: Villager, workMode = false): void {
   const key = [villagerA.profile.id, villagerB.profile.id].sort().join(':convo:');
   if (activeSessions.has(key)) return;
 
@@ -200,13 +182,37 @@ export function startConversation(villagerA: Villager, villagerB: Villager): voi
   if (!agentA || !agentB) return;
   if (agentA.inConversation || agentB.inConversation) return;
 
-  const session = new ConversationSession(villagerA, villagerB, 4 + Math.floor(Math.random() * 2));
+  const maxTurns = workMode ? 2 : 4 + Math.floor(Math.random() * 2);
+  const session = new ConversationSession(villagerA, villagerB, maxTurns, workMode);
   session.start();
 }
 
 export function isInActiveConversation(villagerId: string): boolean {
   const agent = getAgent(villagerId);
   return agent?.inConversation ?? false;
+}
+
+function faceEachOther(store: ReturnType<typeof useGameStore.getState>, idA: string, idB: string): void {
+  const a = store.villagers.find((v) => v.profile.id === idA);
+  const b = store.villagers.find((v) => v.profile.id === idB);
+  if (!a || !b) return;
+
+  const dx = b.state.x - a.state.x;
+  const dy = b.state.y - a.state.y;
+
+  let facingA: Direction;
+  let facingB: Direction;
+
+  if (Math.abs(dx) > Math.abs(dy)) {
+    facingA = dx > 0 ? 'right' : 'left';
+    facingB = dx > 0 ? 'left' : 'right';
+  } else {
+    facingA = dy > 0 ? 'down' : 'up';
+    facingB = dy > 0 ? 'up' : 'down';
+  }
+
+  store.updateVillager(idA, { facing: facingA });
+  store.updateVillager(idB, { facing: facingB });
 }
 
 function sleep(ms: number): Promise<void> {

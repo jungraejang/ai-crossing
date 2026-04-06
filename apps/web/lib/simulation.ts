@@ -36,6 +36,7 @@ export function simulationTick(dt: number) {
       runAgentFreeTime({ ...v, state }, agent, totalGameMinutes, world.time.hour);
       state = updateMovement(state, dt, world.speed);
       state = processAction(state, gameTimeDt);
+      state = workplaceFidget(v.profile.id, state, dt, world.speed);
     }
 
     return { ...v, state };
@@ -50,6 +51,19 @@ export function simulationTick(dt: number) {
   }
   if (tickCounter % 60 === 0) {
     store.clearExpiredBubbles();
+  }
+  if (tickCounter % 3600 === 0) {
+    pruneEncounterCache();
+  }
+}
+
+function pruneEncounterCache() {
+  const now = Date.now();
+  const maxAge = 60000;
+  for (const key of Object.keys(lastEncounterCheck)) {
+    if (now - lastEncounterCheck[key]! > maxAge) {
+      delete lastEncounterCheck[key];
+    }
   }
 }
 
@@ -81,8 +95,26 @@ function enforceSchedule(
 
   const currentAction = state.currentAction?.type;
 
-  if (currentAction === 'eating' || currentAction === 'sleeping' || currentAction === 'working') {
+  if (currentAction === 'sleeping' || currentAction === 'working') {
     return state;
+  }
+  if (currentAction === 'eating') {
+    const elapsed = state.currentAction?.gameTimeElapsed ?? 0;
+    const dur = state.currentAction?.duration ?? 0;
+    if (state.hunger <= 20 || (dur > 0 && elapsed >= dur)) {
+      return { ...state, currentAction: { type: 'idle', startedAt: Date.now(), duration: 0 } };
+    }
+    return state;
+  }
+  if (currentAction === 'wandering' || currentAction === 'socializing' || currentAction === 'resting' || currentAction === 'shopping' || currentAction === 'crafting') {
+    const elapsed = state.currentAction?.gameTimeElapsed ?? 0;
+    const duration = state.currentAction?.duration ?? 0;
+    if (duration > 0 && elapsed < duration) {
+      if (state.hunger >= NEED_THRESHOLDS.hunger.urgent || state.energy <= NEED_THRESHOLDS.energy.urgent) {
+        return { ...state, currentAction: { type: 'idle', startedAt: Date.now(), duration: 0 } };
+      }
+      return state;
+    }
   }
 
   if (state.energy <= NEED_THRESHOLDS.energy.urgent) {
@@ -90,7 +122,10 @@ function enforceSchedule(
   }
 
   if (state.hunger >= NEED_THRESHOLDS.hunger.urgent) {
-    return startActionInPlace(state, 'eating', 15);
+    const eatLoc = canEatHere(state.currentLocation, villager.profile.homeId)
+      ? state.currentLocation
+      : pickEatLocation(villager.profile.homeId);
+    return enforceGoToAndDo(villager, state, eatLoc, 'eating', 15);
   }
 
   const block = getScheduleBlock(villager, currentHour);
@@ -106,8 +141,12 @@ function enforceSchedule(
   }
 
   if (routine === 'eat') {
-    const targetLoc = block!.locationId || villager.profile.homeId;
-    return enforceGoToAndDo(villager, state, targetLoc, 'eating', 15);
+    if (state.hunger >= 50) {
+      const targetLoc = block!.locationId || villager.profile.homeId;
+      const eatLoc = canEatHere(targetLoc, villager.profile.homeId) ? targetLoc : pickEatLocation(villager.profile.homeId);
+      return enforceGoToAndDo(villager, state, eatLoc, 'eating', 15);
+    }
+    return applyFreeTimeFallback(villager, state, block);
   }
 
   if (!currentAction || currentAction === 'idle') {
@@ -115,6 +154,14 @@ function enforceSchedule(
   }
 
   return state;
+}
+
+function canEatHere(location: string, homeId: string): boolean {
+  return location === homeId || location === AREA_TAGS.CAFE;
+}
+
+function pickEatLocation(homeId: string): string {
+  return Math.random() < 0.3 ? AREA_TAGS.CAFE : homeId;
 }
 
 function startActionInPlace(state: Villager['state'], type: ActionType, duration: number): Villager['state'] {
@@ -149,7 +196,11 @@ function applyFreeTimeFallback(
   block: ScheduleBlock | null,
 ): Villager['state'] {
   if (state.hunger >= NEED_THRESHOLDS.hunger.high) {
-    return { ...state, currentAction: { type: 'eating', startedAt: Date.now(), duration: 15, gameTimeElapsed: 0 } };
+    if (canEatHere(state.currentLocation, villager.profile.homeId)) {
+      return { ...state, currentAction: { type: 'eating', startedAt: Date.now(), duration: 15, gameTimeElapsed: 0 } };
+    }
+    const eatLoc = pickEatLocation(villager.profile.homeId);
+    return { ...state, targetDestination: eatLoc, currentAction: { type: 'idle', startedAt: Date.now(), duration: 0 } };
   }
 
   if (state.sociability >= NEED_THRESHOLDS.sociability.high) {
@@ -251,6 +302,10 @@ const LOCATION_LABELS: Record<string, string> = {
   [AREA_TAGS.HOME_6]: 'Home',
   [AREA_TAGS.HOME_7]: 'Home',
   [AREA_TAGS.HOME_8]: 'Home',
+  [AREA_TAGS.HOME_9]: 'Home',
+  [AREA_TAGS.HOME_10]: 'Home',
+  [AREA_TAGS.HOME_11]: 'Home',
+  [AREA_TAGS.HOME_12]: 'Home',
 };
 
 function getRecentEventDescriptions(): string[] {
@@ -388,6 +443,55 @@ function processAction(
   return { ...state, currentAction: { ...action, gameTimeElapsed: gameMinutesElapsed } };
 }
 
+const fidgetTimers: Map<string, number> = new Map();
+
+function workplaceFidget(
+  villagerId: string,
+  state: Villager['state'],
+  dt: number,
+  speed: number,
+): Villager['state'] {
+  const action = state.currentAction?.type;
+  if (action !== 'working' && action !== 'eating' && action !== 'socializing') return state;
+  if (state.isMoving || state.path.length > 0) return state;
+
+  const loc = state.currentLocation;
+  const positions = locationPositions[loc];
+  if (!positions || positions.length <= 1) return state;
+
+  const timer = (fidgetTimers.get(villagerId) ?? 0) + dt * speed;
+  const fidgetInterval = 8 + Math.random() * 4;
+
+  if (timer < fidgetInterval) {
+    fidgetTimers.set(villagerId, timer);
+    return state;
+  }
+
+  fidgetTimers.set(villagerId, 0);
+
+  const current = { x: Math.round(state.x), y: Math.round(state.y) };
+  const others = positions.filter((p) => p.x !== current.x || p.y !== current.y);
+  if (others.length === 0) return state;
+
+  const target = others[Math.floor(Math.random() * others.length)]!;
+
+  const dx = target.x - state.x;
+  const dy = target.y - state.y;
+  let facing = state.facing;
+  if (Math.abs(dx) > Math.abs(dy)) {
+    facing = dx > 0 ? 'right' : 'left';
+  } else if (dy !== 0) {
+    facing = dy > 0 ? 'down' : 'up';
+  }
+
+  return {
+    ...state,
+    path: [target],
+    isMoving: true,
+    facing,
+  };
+}
+
 function calculateMood(state: Villager['state']): Villager['state']['mood'] {
   if (state.hunger >= 80) return 'hungry';
   if (state.energy <= 20) return 'tired';
@@ -436,6 +540,10 @@ function applySeparation(villagers: Villager[], dt: number): Villager[] {
   });
 }
 
+function startWorkChat(a: Villager, b: Villager) {
+  startConversation(a, b, true);
+}
+
 function checkEncounters(villagers: Villager[]) {
   const store = useGameStore.getState();
   const now = Date.now();
@@ -466,6 +574,11 @@ function checkEncounters(villagers: Villager[]) {
         if (now - lastTime < cooldownMs) continue;
         lastEncounterCheck[pairKey] = now;
 
+        const bothWorking = a.state.currentAction?.type === 'working' && b.state.currentAction?.type === 'working';
+        const eitherWorking = a.state.currentAction?.type === 'working' || b.state.currentAction?.type === 'working';
+
+        if (bothWorking && (now - (lastEncounterCheck[pairKey + ':work'] ?? 0)) < 45000) continue;
+
         const avgSociability = (a.state.sociability + b.state.sociability) / 2;
         const relA = a.state.relationshipMap[b.profile.id] ?? 0;
 
@@ -473,10 +586,18 @@ function checkEncounters(villagers: Villager[]) {
         if (sameLocation) interactChance += 0.25;
         if (relA > 20) interactChance += 0.15;
         if (relA < -20) interactChance -= 0.1;
-        interactChance = Math.max(0.05, Math.min(0.85, interactChance));
+        if (bothWorking) interactChance *= 0.15;
+        else if (eitherWorking) interactChance *= 0.4;
+        interactChance = Math.max(0.02, Math.min(0.85, interactChance));
 
         if (Math.random() < interactChance) {
-          startConversation(a, b);
+          if (bothWorking) lastEncounterCheck[pairKey + ':work'] = now;
+
+          if (eitherWorking) {
+            startWorkChat(a, b);
+          } else {
+            startConversation(a, b);
+          }
 
           store.pushEvent({
             id: `evt_${now}_social_${Math.random().toString(36).slice(2, 8)}`,
@@ -516,6 +637,10 @@ const locationPositions: Record<string, Array<{ x: number; y: number }>> = {
   [AREA_TAGS.HOME_6]: [{ x: 21, y: 4 }, { x: 22, y: 4 }, { x: 23, y: 4 }],
   [AREA_TAGS.HOME_7]: [{ x: 35, y: 4 }, { x: 36, y: 4 }, { x: 37, y: 4 }],
   [AREA_TAGS.HOME_8]: [{ x: 35, y: 13 }, { x: 36, y: 13 }, { x: 37, y: 13 }],
+  [AREA_TAGS.HOME_9]: [{ x: 13, y: 9 }, { x: 14, y: 9 }, { x: 15, y: 9 }],
+  [AREA_TAGS.HOME_10]: [{ x: 21, y: 9 }, { x: 22, y: 9 }, { x: 23, y: 9 }],
+  [AREA_TAGS.HOME_11]: [{ x: 13, y: 23 }, { x: 14, y: 23 }, { x: 15, y: 23 }],
+  [AREA_TAGS.HOME_12]: [{ x: 29, y: 23 }, { x: 30, y: 23 }, { x: 31, y: 23 }],
 };
 
 function getLocationCoords(locationId: string): { x: number; y: number } | null {

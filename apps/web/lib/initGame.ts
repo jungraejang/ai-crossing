@@ -19,6 +19,18 @@ const STARTER_VILLAGERS: Villager[] = [
   createVillager('milo', 'Milo', 'cook', ['cheerful', 'playful'], ['experimenting with recipes', 'taste-testing at the café', 'foraging wild mushrooms', 'hosting dinner parties'], AREA_TAGS.HOME_8, 35, 13),
   createVillager('pearl', 'Pearl', 'librarian', ['witty', 'mystical'], ['cataloging rare books', 'debating philosophy in the square', 'pressing wildflowers', 'writing poetry by the lake'], AREA_TAGS.HOME_4, 24, 19),
   createVillager('otto', 'Otto', 'blacksmith', ['gruff', 'hardworking'], ['forging tools at the workshop', 'testing metal strength', 'collecting ore samples', 'playing chess alone'], AREA_TAGS.HOME_5, 32, 19),
+  createVillager('hazel', 'Hazel', 'tailor', ['creative', 'gentle'], ['sewing dresses', 'collecting fabrics', 'fashion sketching', 'tea at the café'], AREA_TAGS.HOME_9, 13, 9),
+  createVillager('cliff', 'Cliff', 'miner', ['gruff', 'hardworking'], ['exploring caves', 'collecting gems', 'arm wrestling', 'campfire stories'], AREA_TAGS.HOME_9, 14, 9),
+  createVillager('wren', 'Wren', 'doctor', ['gentle', 'curious'], ['mixing medicines', 'reading journals', 'morning jogs by the lake', 'helping others'], AREA_TAGS.HOME_10, 21, 9),
+  createVillager('birch', 'Birch', 'beekeeper', ['quiet', 'mystical'], ['tending beehives in the garden', 'making honey', 'watching bees dance', 'nature walks'], AREA_TAGS.HOME_10, 22, 9),
+  createVillager('ember', 'Ember', 'sailor', ['playful', 'loyal'], ['fishing at the lake', 'telling sea tales', 'knot tying', 'stargazing from the bridge'], AREA_TAGS.HOME_11, 13, 23),
+  createVillager('fern', 'Fern', 'teacher', ['cheerful', 'witty'], ['tutoring in the square', 'writing lesson plans', 'picking wildflowers', 'debating with Pearl'], AREA_TAGS.HOME_11, 14, 23),
+  createVillager('slate', 'Slate', 'mason', ['gruff', 'loyal'], ['building stone walls', 'sculpting', 'heavy lifting', 'sitting by the fountain'], AREA_TAGS.HOME_12, 29, 23),
+  createVillager('poppy', 'Poppy', 'florist', ['cheerful', 'gentle'], ['arranging bouquets', 'growing roses in the garden', 'decorating the café', 'singing'], AREA_TAGS.HOME_3, 7, 19),
+  createVillager('reed', 'Reed', 'ranger', ['quiet', 'hardworking'], ['patrolling the lake shore', 'tracking animals', 'whittling arrows', 'dawn hikes'], AREA_TAGS.HOME_7, 36, 4),
+  createVillager('dusk', 'Dusk', 'astronomer', ['mystical', 'curious'], ['stargazing', 'mapping constellations', 'writing theories', 'night walks'], AREA_TAGS.HOME_6, 22, 4),
+  createVillager('cinder', 'Cinder', 'potter', ['creative', 'playful'], ['shaping clay at the workshop', 'glazing pots', 'decorating homes', 'humming tunes'], AREA_TAGS.HOME_1, 6, 4),
+  createVillager('flint', 'Flint', 'hunter', ['quiet', 'gruff'], ['tracking in the garden', 'sharpening tools', 'smoking fish', 'lakeside campfires'], AREA_TAGS.HOME_8, 36, 13),
 ];
 
 function createVillager(
@@ -50,6 +62,18 @@ function createVillager(
     painter: 'Dreamy and abstract, describes things in colors and textures',
     guard: 'Formal and watchful, speaks in clipped sentences like a report',
     cook: 'Enthusiastic about flavors, constantly offering food advice',
+    tailor: 'Elegant and precise, speaks about patterns and details with passion',
+    miner: 'Rough and earthy, uses mining metaphors, speaks with a rumble',
+    doctor: 'Calm and reassuring, clinical but caring, asks how you feel',
+    beekeeper: 'Slow and meditative, speaks in quiet buzzing rhythms about nature',
+    sailor: 'Bold and salty, uses nautical slang, tells tall tales',
+    teacher: 'Patient and articulate, explains things clearly, asks questions',
+    mason: 'Measured and steady, speaks about foundations and building things right',
+    florist: 'Bright and fragrant, speaks in flower metaphors, always cheerful',
+    ranger: 'Terse and observant, speaks about tracks and signs in nature',
+    astronomer: 'Dreamy and cosmic, references stars and vastness, philosophical',
+    potter: 'Tactile and creative, speaks about shapes and feeling the clay',
+    hunter: 'Laconic and watchful, few words, speaks about patience and the wild',
   };
 
   return {
