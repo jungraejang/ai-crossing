@@ -1,6 +1,8 @@
 import type { VillagerState } from '@ai-crossing/shared';
 import { NEED_DECAY_RATES, NEED_RECOVERY } from '@ai-crossing/shared';
 
+type NeedKey = 'hunger' | 'energy' | 'stress' | 'boredom' | 'sociability';
+
 export function decayNeeds(state: VillagerState, dt: number): VillagerState {
   return {
     ...state,
@@ -20,12 +22,8 @@ export function applyActionRecovery(
   if (!recovery) return state;
 
   const updated = { ...state };
-  for (const [key, value] of Object.entries(recovery)) {
-    if (key in updated && typeof (updated as Record<string, unknown>)[key] === 'number') {
-      (updated as Record<string, number>)[key] = clamp(
-        (updated as Record<string, number>)[key]! + value,
-      );
-    }
+  for (const [key, value] of Object.entries(recovery) as Array<[NeedKey, number]>) {
+    updated[key] = clamp(updated[key] + value);
   }
   return updated;
 }

@@ -76,7 +76,15 @@ export type Mood =
   | 'excited'
   | 'lonely';
 
-export type Direction = 'up' | 'down' | 'left' | 'right';
+export type Direction =
+  | 'north'
+  | 'northEast'
+  | 'east'
+  | 'southEast'
+  | 'south'
+  | 'southWest'
+  | 'west'
+  | 'northWest';
 
 export interface VillagerAction {
   type: ActionType;

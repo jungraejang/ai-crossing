@@ -1,6 +1,7 @@
 import type { Villager, WorldState, AgentThinkInput, AgentThinkResult, Direction } from '@ai-crossing/shared';
 import { useGameStore } from '@/stores/gameStore';
 import { getAgent } from './villagerAgent';
+import { getDirectionFromDelta } from '@ai-crossing/shared';
 
 const activeSessions: Map<string, ConversationSession> = new Map();
 
@@ -200,16 +201,8 @@ function faceEachOther(store: ReturnType<typeof useGameStore.getState>, idA: str
   const dx = b.state.x - a.state.x;
   const dy = b.state.y - a.state.y;
 
-  let facingA: Direction;
-  let facingB: Direction;
-
-  if (Math.abs(dx) > Math.abs(dy)) {
-    facingA = dx > 0 ? 'right' : 'left';
-    facingB = dx > 0 ? 'left' : 'right';
-  } else {
-    facingA = dy > 0 ? 'down' : 'up';
-    facingB = dy > 0 ? 'up' : 'down';
-  }
+  const facingA: Direction = getDirectionFromDelta(dx, dy, a.state.facing);
+  const facingB: Direction = getDirectionFromDelta(-dx, -dy, b.state.facing);
 
   store.updateVillager(idA, { facing: facingA });
   store.updateVillager(idB, { facing: facingB });

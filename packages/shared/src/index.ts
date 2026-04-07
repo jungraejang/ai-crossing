@@ -10,3 +10,4 @@ export * from './schemas/aiOutputSchema';
 export * from './constants/needs';
 export * from './constants/actions';
 export * from './constants/areas';
+export * from './utils/direction';

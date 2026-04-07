@@ -29,5 +29,5 @@ export const villagersTable = pgTable('villagers', {
   currentPlan: jsonb('current_plan').$type<string[]>().notNull().default([]),
   x: real('x').notNull().default(0),
   y: real('y').notNull().default(0),
-  facing: text('facing').notNull().default('down'),
+  facing: text('facing').notNull().default('south'),
 });

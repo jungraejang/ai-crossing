@@ -5,6 +5,7 @@ import {
   NEED_THRESHOLDS,
   MOVEMENT_SPEED_TILES_PER_SECOND,
   AREA_TAGS,
+  getDirectionFromDelta,
 } from '@ai-crossing/shared';
 import { findPath } from '@ai-crossing/simulation';
 import { getAgent } from './villagerAgent';
@@ -443,12 +444,7 @@ function updateMovement(
   const dy = next.y - state.y;
   const dist = Math.sqrt(dx * dx + dy * dy);
 
-  let facing = state.facing;
-  if (Math.abs(dx) > Math.abs(dy)) {
-    facing = dx > 0 ? 'right' : 'left';
-  } else if (dy !== 0) {
-    facing = dy > 0 ? 'down' : 'up';
-  }
+  const facing = getDirectionFromDelta(dx, dy, state.facing);
 
   if (dist <= moveSpeed) {
     const remainingPath = state.path.slice(1);
@@ -540,12 +536,7 @@ function workplaceFidget(
 
   const dx = target.x - state.x;
   const dy = target.y - state.y;
-  let facing = state.facing;
-  if (Math.abs(dx) > Math.abs(dy)) {
-    facing = dx > 0 ? 'right' : 'left';
-  } else if (dy !== 0) {
-    facing = dy > 0 ? 'down' : 'up';
-  }
+  const facing = getDirectionFromDelta(dx, dy, state.facing);
 
   return {
     ...state,
@@ -689,26 +680,26 @@ function checkEncounters(villagers: Villager[]) {
 
 const locationPositions: Record<string, Array<{ x: number; y: number }>> = {
   [AREA_TAGS.TOWN_SQUARE]: [
-    { x: 18, y: 13 }, { x: 19, y: 13 }, { x: 20, y: 13 }, { x: 21, y: 13 },
-    { x: 18, y: 14 }, { x: 19, y: 14 }, { x: 20, y: 14 }, { x: 21, y: 14 },
+    { x: 27, y: 20 }, { x: 28, y: 20 }, { x: 29, y: 20 }, { x: 30, y: 20 },
+    { x: 27, y: 21 }, { x: 28, y: 21 }, { x: 29, y: 21 }, { x: 30, y: 21 },
   ],
-  [AREA_TAGS.CAFE]: [{ x: 14, y: 19 }, { x: 15, y: 19 }, { x: 16, y: 19 }],
-  [AREA_TAGS.STORE]: [{ x: 27, y: 13 }, { x: 28, y: 13 }, { x: 29, y: 13 }],
-  [AREA_TAGS.GARDEN]: [{ x: 7, y: 13 }, { x: 8, y: 13 }, { x: 9, y: 13 }],
-  [AREA_TAGS.LAKE]: [{ x: 18, y: 24 }, { x: 19, y: 24 }, { x: 20, y: 24 }, { x: 21, y: 24 }, { x: 22, y: 24 }],
-  [AREA_TAGS.WORKSHOP]: [{ x: 27, y: 4 }, { x: 28, y: 4 }, { x: 29, y: 4 }],
+  [AREA_TAGS.CAFE]: [{ x: 19, y: 29 }, { x: 20, y: 29 }, { x: 21, y: 29 }],
+  [AREA_TAGS.STORE]: [{ x: 43, y: 19 }, { x: 44, y: 19 }, { x: 45, y: 19 }],
+  [AREA_TAGS.GARDEN]: [{ x: 7, y: 19 }, { x: 8, y: 19 }, { x: 9, y: 19 }],
+  [AREA_TAGS.LAKE]: [{ x: 28, y: 41 }, { x: 29, y: 41 }, { x: 30, y: 41 }, { x: 31, y: 41 }, { x: 32, y: 41 }],
+  [AREA_TAGS.WORKSHOP]: [{ x: 41, y: 4 }, { x: 42, y: 4 }, { x: 43, y: 4 }],
   [AREA_TAGS.HOME_1]: [{ x: 5, y: 4 }, { x: 6, y: 4 }, { x: 7, y: 4 }],
-  [AREA_TAGS.HOME_2]: [{ x: 13, y: 4 }, { x: 14, y: 4 }, { x: 15, y: 4 }],
-  [AREA_TAGS.HOME_3]: [{ x: 5, y: 19 }, { x: 6, y: 19 }, { x: 7, y: 19 }],
-  [AREA_TAGS.HOME_4]: [{ x: 23, y: 19 }, { x: 24, y: 19 }, { x: 25, y: 19 }],
-  [AREA_TAGS.HOME_5]: [{ x: 31, y: 19 }, { x: 32, y: 19 }, { x: 33, y: 19 }],
-  [AREA_TAGS.HOME_6]: [{ x: 21, y: 4 }, { x: 22, y: 4 }, { x: 23, y: 4 }],
-  [AREA_TAGS.HOME_7]: [{ x: 35, y: 4 }, { x: 36, y: 4 }, { x: 37, y: 4 }],
-  [AREA_TAGS.HOME_8]: [{ x: 35, y: 13 }, { x: 36, y: 13 }, { x: 37, y: 13 }],
-  [AREA_TAGS.HOME_9]: [{ x: 13, y: 9 }, { x: 14, y: 9 }, { x: 15, y: 9 }],
-  [AREA_TAGS.HOME_10]: [{ x: 21, y: 9 }, { x: 22, y: 9 }, { x: 23, y: 9 }],
-  [AREA_TAGS.HOME_11]: [{ x: 13, y: 23 }, { x: 14, y: 23 }, { x: 15, y: 23 }],
-  [AREA_TAGS.HOME_12]: [{ x: 29, y: 23 }, { x: 30, y: 23 }, { x: 31, y: 23 }],
+  [AREA_TAGS.HOME_2]: [{ x: 17, y: 4 }, { x: 18, y: 4 }, { x: 19, y: 4 }],
+  [AREA_TAGS.HOME_3]: [{ x: 5, y: 29 }, { x: 6, y: 29 }, { x: 7, y: 29 }],
+  [AREA_TAGS.HOME_4]: [{ x: 33, y: 29 }, { x: 34, y: 29 }, { x: 35, y: 29 }],
+  [AREA_TAGS.HOME_5]: [{ x: 47, y: 29 }, { x: 48, y: 29 }, { x: 49, y: 29 }],
+  [AREA_TAGS.HOME_6]: [{ x: 29, y: 4 }, { x: 30, y: 4 }, { x: 31, y: 4 }],
+  [AREA_TAGS.HOME_7]: [{ x: 53, y: 4 }, { x: 54, y: 4 }, { x: 55, y: 4 }],
+  [AREA_TAGS.HOME_8]: [{ x: 53, y: 19 }, { x: 54, y: 19 }, { x: 55, y: 19 }],
+  [AREA_TAGS.HOME_9]: [{ x: 17, y: 12 }, { x: 18, y: 12 }, { x: 19, y: 12 }],
+  [AREA_TAGS.HOME_10]: [{ x: 29, y: 12 }, { x: 30, y: 12 }, { x: 31, y: 12 }],
+  [AREA_TAGS.HOME_11]: [{ x: 17, y: 37 }, { x: 18, y: 37 }, { x: 19, y: 37 }],
+  [AREA_TAGS.HOME_12]: [{ x: 39, y: 37 }, { x: 40, y: 37 }, { x: 41, y: 37 }],
 };
 
 function getLocationCoords(locationId: string): { x: number; y: number } | null {

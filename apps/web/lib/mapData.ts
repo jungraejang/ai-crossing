@@ -1,5 +1,8 @@
-const W = 40;
-const H = 30;
+import { DEFAULT_ISO_CONFIG } from './isometric';
+import { getBuildingAssetPath, getDecorationAssetPath } from './isometricAssets';
+
+const W = 60;
+const H = 48;
 
 interface BuildingDef {
   x: number;
@@ -9,23 +12,45 @@ interface BuildingDef {
   openInterior?: boolean;
 }
 
+interface IsoRenderAnchor {
+  x: number;
+  y: number;
+}
+
+interface IsoFootprint {
+  width: number;
+  height: number;
+  offsetX?: number;
+  offsetY?: number;
+}
+
+interface IsoRenderConfig {
+  assetPath: string;
+  anchor: IsoRenderAnchor;
+  footprint: IsoFootprint;
+  elevation?: number;
+  sortOffset?: number;
+  tint?: number;
+  roofFadeWhenOccupied?: boolean;
+}
+
 const BUILDING_DEFS: BuildingDef[] = [
   { x: 4, y: 3, w: 4, h: 3, openInterior: true },     // Home 1
-  { x: 12, y: 3, w: 4, h: 3, openInterior: true },    // Home 2
-  { x: 26, y: 3, w: 4, h: 3, openInterior: true },    // Workshop
-  { x: 6, y: 12, w: 4, h: 3, openInterior: true },    // Garden — fully open
-  { x: 26, y: 12, w: 4, h: 3, openInterior: true },   // Store
-  { x: 4, y: 18, w: 4, h: 3, openInterior: true },    // Home 3
-  { x: 13, y: 18, w: 4, h: 3, openInterior: true },   // Café
-  { x: 22, y: 18, w: 4, h: 3, openInterior: true },   // Home 4
-  { x: 30, y: 18, w: 4, h: 3, openInterior: true },   // Home 5
-  { x: 20, y: 3, w: 4, h: 3, openInterior: true },    // Home 6
-  { x: 34, y: 3, w: 4, h: 3, openInterior: true },    // Home 7
-  { x: 34, y: 12, w: 4, h: 3, openInterior: true },   // Home 8
-  { x: 12, y: 8, w: 4, h: 3, openInterior: true },    // Home 9
-  { x: 20, y: 8, w: 4, h: 3, openInterior: true },    // Home 10
-  { x: 12, y: 22, w: 4, h: 3, openInterior: true },   // Home 11
-  { x: 28, y: 22, w: 4, h: 3, openInterior: true },   // Home 12
+  { x: 16, y: 3, w: 4, h: 3, openInterior: true },    // Home 2
+  { x: 40, y: 3, w: 4, h: 3, openInterior: true },    // Workshop
+  { x: 6, y: 18, w: 4, h: 3, openInterior: true },    // Garden — fully open
+  { x: 42, y: 18, w: 4, h: 3, openInterior: true },   // Store
+  { x: 4, y: 28, w: 4, h: 3, openInterior: true },    // Home 3
+  { x: 18, y: 28, w: 4, h: 3, openInterior: true },   // Café
+  { x: 32, y: 28, w: 4, h: 3, openInterior: true },   // Home 4
+  { x: 46, y: 28, w: 4, h: 3, openInterior: true },   // Home 5
+  { x: 28, y: 3, w: 4, h: 3, openInterior: true },    // Home 6
+  { x: 52, y: 3, w: 4, h: 3, openInterior: true },    // Home 7
+  { x: 52, y: 18, w: 4, h: 3, openInterior: true },   // Home 8
+  { x: 16, y: 11, w: 4, h: 3, openInterior: true },   // Home 9
+  { x: 28, y: 11, w: 4, h: 3, openInterior: true },   // Home 10
+  { x: 16, y: 36, w: 4, h: 3, openInterior: true },   // Home 11
+  { x: 38, y: 36, w: 4, h: 3, openInterior: true },   // Home 12
 ];
 
 function generateCollision(): number[][] {
@@ -76,9 +101,9 @@ function generateCollision(): number[][] {
   }
 
   // Lake area (bottom)
-  for (let x = 5; x < 35; x++) {
-    for (let y = 25; y < 29; y++) {
-      if (x >= 18 && x <= 22 && y === 25) continue; // Bridge
+  for (let x = 8; x < 52; x++) {
+    for (let y = 42; y < 47; y++) {
+      if (x >= 28 && x <= 31 && y === 42) continue; // Bridge
       grid[y]![x] = 1;
     }
   }
@@ -117,52 +142,58 @@ function generateTerrainGrid(): TerrainType[][] {
     }
   }
 
-  // Main horizontal path (1 tile wide) connecting rows
-  paintDirtLine(grid, 6, 7, 36, 7);     // Top path
-  paintDirtLine(grid, 6, 11, 36, 11);   // Middle path
-  paintDirtLine(grid, 6, 17, 36, 17);   // Bottom path
-  paintDirtLine(grid, 18, 23, 22, 23);  // Bridge approach
+  // Main horizontal paths
+  paintDirtLine(grid, 6, 8, 55, 8);     // Top road
+  paintDirtLine(grid, 10, 16, 55, 16);  // Civic road
+  paintDirtLine(grid, 6, 25, 55, 25);   // Residential road
+  paintDirtLine(grid, 10, 33, 48, 33);  // Lower homes road
+  paintDirtLine(grid, 20, 41, 40, 41);  // Lakefront road
 
-  // Main vertical path connecting horizontal paths
-  paintDirtLine(grid, 11, 7, 11, 17);   // West vertical
-  paintDirtLine(grid, 20, 7, 20, 23);   // Center vertical
-  paintDirtLine(grid, 33, 7, 33, 17);   // East vertical
+  // Main vertical roads
+  paintDirtLine(grid, 10, 8, 10, 25);
+  paintDirtLine(grid, 24, 8, 24, 33);
+  paintDirtLine(grid, 30, 16, 30, 41);
+  paintDirtLine(grid, 38, 8, 38, 41);
+  paintDirtLine(grid, 52, 8, 52, 25);
 
-  // Connectors from top row buildings down to top path
-  paintDirtLine(grid, 6, 6, 6, 7);      // Home 1
-  paintDirtLine(grid, 14, 6, 14, 7);    // Home 2
-  paintDirtLine(grid, 22, 6, 22, 7);    // Home 6
-  paintDirtLine(grid, 28, 6, 28, 7);    // Workshop
-  paintDirtLine(grid, 36, 6, 36, 7);    // Home 7
+  // Connectors from top row buildings
+  paintDirtLine(grid, 6, 6, 6, 8);      // Home 1
+  paintDirtLine(grid, 18, 6, 18, 8);    // Home 2
+  paintDirtLine(grid, 30, 6, 30, 8);    // Home 6
+  paintDirtLine(grid, 42, 6, 42, 8);    // Workshop
+  paintDirtLine(grid, 54, 6, 54, 8);    // Home 7
 
-  // Connectors from middle row buildings to middle path
-  paintDirtLine(grid, 8, 11, 8, 12);    // Garden
-  paintDirtLine(grid, 20, 11, 20, 12);  // Town Square top
-  paintDirtLine(grid, 20, 16, 20, 17);  // Town Square bottom
-  paintDirtLine(grid, 28, 11, 28, 12);  // Store
-  paintDirtLine(grid, 36, 11, 36, 12);  // Home 8
+  // Connectors from middle-top homes
+  paintDirtLine(grid, 18, 8, 18, 11);   // Home 9 top
+  paintDirtLine(grid, 18, 14, 18, 16);  // Home 9 bottom
+  paintDirtLine(grid, 30, 8, 30, 11);   // Home 10 top
+  paintDirtLine(grid, 30, 14, 30, 16);  // Home 10 bottom
 
-  // Connectors from new homes (y=8 row) to horizontal paths
-  paintDirtLine(grid, 14, 7, 14, 8);    // Home 9 top
-  paintDirtLine(grid, 14, 11, 14, 10);  // Home 9 bottom
-  paintDirtLine(grid, 22, 7, 22, 8);    // Home 10 top
-  paintDirtLine(grid, 22, 11, 22, 10);  // Home 10 bottom
+  // Connectors from civic row
+  paintDirtLine(grid, 8, 16, 8, 18);    // Garden top
+  paintDirtLine(grid, 8, 21, 8, 25);    // Garden bottom
+  paintDirtLine(grid, 29, 16, 29, 18);  // Town square top
+  paintDirtLine(grid, 29, 22, 29, 25);  // Town square bottom
+  paintDirtLine(grid, 44, 16, 44, 18);  // Store top
+  paintDirtLine(grid, 44, 21, 44, 25);  // Store bottom
+  paintDirtLine(grid, 54, 16, 54, 18);  // Home 8 top
+  paintDirtLine(grid, 54, 21, 54, 25);  // Home 8 bottom
 
-  // Connectors from bottom row buildings up to bottom path
-  paintDirtLine(grid, 6, 17, 6, 18);    // Home 3
-  paintDirtLine(grid, 15, 17, 15, 18);  // Café
-  paintDirtLine(grid, 24, 17, 24, 18);  // Home 4
-  paintDirtLine(grid, 32, 17, 32, 18);  // Home 5
+  // Connectors from residential row
+  paintDirtLine(grid, 6, 25, 6, 28);    // Home 3
+  paintDirtLine(grid, 20, 25, 20, 28);  // Café
+  paintDirtLine(grid, 34, 25, 34, 28);  // Home 4
+  paintDirtLine(grid, 48, 25, 48, 28);  // Home 5
 
-  // Connectors for lower new homes (y=22 row) to bottom path and bridge approach
-  paintDirtLine(grid, 6, 22, 38, 22);   // Bottom horizontal path
-  paintDirtLine(grid, 14, 17, 14, 22);  // Home 11 connector
-  paintDirtLine(grid, 30, 17, 30, 22);  // Home 12 connector
+  // Connectors from lower homes and bridge approach
+  paintDirtLine(grid, 18, 33, 18, 36);  // Home 11
+  paintDirtLine(grid, 40, 33, 40, 36);  // Home 12
+  paintDirtLine(grid, 30, 33, 30, 41);  // Bridge approach
 
   // Water
-  for (let x = 5; x < 35; x++) {
-    for (let y = 25; y < 29; y++) {
-      if (x >= 18 && x <= 22 && y === 25) {
+  for (let x = 8; x < 52; x++) {
+    for (let y = 42; y < 47; y++) {
+      if (x >= 28 && x <= 31 && y === 42) {
         grid[y]![x] = 'bridge';
       } else {
         grid[y]![x] = 'water';
@@ -171,7 +202,7 @@ function generateTerrainGrid(): TerrainType[][] {
   }
 
   // Town square cobblestone
-  const townSquare = { x: 17, y: 12, w: 6, h: 4 };
+  const townSquare = { x: 25, y: 18, w: 8, h: 5 };
   for (let by = townSquare.y; by < townSquare.y + townSquare.h; by++) {
     for (let bx = townSquare.x; bx < townSquare.x + townSquare.w; bx++) {
       if (by >= 0 && by < H && bx >= 0 && bx < W) grid[by]![bx] = 'cobble';
@@ -194,8 +225,8 @@ function generateGroundTiles(): number[] {
   const tiles: number[] = [];
   for (let y = 0; y < H; y++) {
     for (let x = 0; x < W; x++) {
-      if (y >= 25 && y < 29 && x >= 5 && x < 35) {
-        if (x >= 18 && x <= 22 && y === 25) {
+      if (y >= 42 && y < 47 && x >= 8 && x < 52) {
+        if (x >= 28 && x <= 31 && y === 42) {
           tiles.push(4);
         } else {
           tiles.push(3);
@@ -215,94 +246,166 @@ export interface MapDecoration {
   y: number;
   w: number;
   h: number;
+  render: IsoRenderConfig;
+}
+
+export interface MapBuilding {
+  id: string;
+  label: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  color: number;
+  render: IsoRenderConfig;
+}
+
+function createDecoration(
+  id: string,
+  sprite: string,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  tint?: number,
+): MapDecoration {
+  return {
+    id,
+    sprite,
+    x,
+    y,
+    w,
+    h,
+    render: {
+      assetPath: getDecorationAssetPath(sprite),
+      anchor: { x: 0.5, y: 1 },
+      footprint: { width: Math.max(1, Math.round(w)), height: Math.max(1, Math.round(h)) },
+      sortOffset: Math.round(h * 10),
+      tint,
+    },
+  };
+}
+
+function createBuilding(
+  id: string,
+  label: string,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  color: number,
+): MapBuilding {
+  return {
+    id,
+    label,
+    x,
+    y,
+    w,
+    h,
+    color,
+    render: {
+      assetPath: getBuildingAssetPath(id),
+      anchor: { x: 0.5, y: 1 },
+      footprint: { width: w, height: h },
+      elevation: Math.max(2, h),
+      roofFadeWhenOccupied: true,
+      sortOffset: h * 25,
+      tint: color,
+    },
+  };
 }
 
 const DECORATIONS: MapDecoration[] = [
   // Trees scattered around empty grass
-  { id: 'd1', sprite: 'oak_tree', x: 1, y: 1, w: 2, h: 2 },
-  { id: 'd2', sprite: 'pine_tree', x: 9, y: 2, w: 1.5, h: 2 },
-  { id: 'd3', sprite: 'cherry_tree', x: 17, y: 1, w: 2, h: 2 },
-  { id: 'd4', sprite: 'oak_tree', x: 25, y: 1, w: 2, h: 2 },
-  { id: 'd5', sprite: 'pine_tree', x: 38, y: 8, w: 1.5, h: 2 },
-  { id: 'd6', sprite: 'cherry_tree', x: 1, y: 9, w: 2, h: 2 },
-  { id: 'd7', sprite: 'oak_tree', x: 1, y: 14, w: 2, h: 2 },
-  { id: 'd8', sprite: 'pine_tree', x: 38, y: 14, w: 1.5, h: 2 },
-  { id: 'd9', sprite: 'cherry_tree', x: 10, y: 19, w: 2, h: 2 },
-  { id: 'd10', sprite: 'oak_tree', x: 27, y: 19, w: 2, h: 2 },
-  { id: 'd11', sprite: 'pine_tree', x: 1, y: 21, w: 1.5, h: 2 },
-  { id: 'd12', sprite: 'oak_tree', x: 37, y: 20, w: 2, h: 2 },
+  createDecoration('d1', 'oak_tree', 1, 1, 2, 2, 0x5b8c51),
+  createDecoration('d2', 'pine_tree', 9, 2, 1.5, 2, 0x49703f),
+  createDecoration('d3', 'cherry_tree', 17, 1, 2, 2, 0xc97ca6),
+  createDecoration('d4', 'oak_tree', 25, 1, 2, 2, 0x5b8c51),
+  createDecoration('d5', 'pine_tree', 57, 9, 1.5, 2, 0x49703f),
+  createDecoration('d6', 'cherry_tree', 1, 9, 2, 2, 0xc97ca6),
+  createDecoration('d7', 'oak_tree', 1, 14, 2, 2, 0x5b8c51),
+  createDecoration('d8', 'pine_tree', 57, 24, 1.5, 2, 0x49703f),
+  createDecoration('d9', 'cherry_tree', 10, 31, 2, 2, 0xc97ca6),
+  createDecoration('d10', 'oak_tree', 56, 31, 2, 2, 0x5b8c51),
+  createDecoration('d11', 'pine_tree', 2, 35, 1.5, 2, 0x49703f),
+  createDecoration('d12', 'oak_tree', 56, 37, 2, 2, 0x5b8c51),
 
   // Bushes between buildings
-  { id: 'd13', sprite: 'bush', x: 9, y: 4, w: 1, h: 1 },
-  { id: 'd14', sprite: 'bush', x: 18, y: 5, w: 1, h: 1 },
-  { id: 'd15', sprite: 'bush', x: 31, y: 4, w: 1, h: 1 },
-  { id: 'd16', sprite: 'bush', x: 12, y: 13, w: 1, h: 1 },
-  { id: 'd17', sprite: 'bush', x: 24, y: 13, w: 1, h: 1 },
-  { id: 'd18', sprite: 'bush', x: 10, y: 19, w: 1, h: 1 },
-  { id: 'd19', sprite: 'bush', x: 19, y: 19, w: 1, h: 1 },
+  createDecoration('d13', 'bush', 9, 4, 1, 1, 0x4f8a4a),
+  createDecoration('d14', 'bush', 18, 5, 1, 1, 0x4f8a4a),
+  createDecoration('d15', 'bush', 31, 4, 1, 1, 0x4f8a4a),
+  createDecoration('d16', 'bush', 12, 13, 1, 1, 0x4f8a4a),
+  createDecoration('d17', 'bush', 36, 23, 1, 1, 0x4f8a4a),
+  createDecoration('d18', 'bush', 10, 31, 1, 1, 0x4f8a4a),
+  createDecoration('d19', 'bush', 24, 31, 1, 1, 0x4f8a4a),
 
   // Flower patches
-  { id: 'd20', sprite: 'flowers', x: 3, y: 9, w: 1, h: 1 },
-  { id: 'd21', sprite: 'flowers', x: 15, y: 9, w: 1, h: 1 },
-  { id: 'd22', sprite: 'flowers', x: 23, y: 10, w: 1, h: 1 },
-  { id: 'd23', sprite: 'flowers', x: 16, y: 15, w: 1, h: 1 },
-  { id: 'd24', sprite: 'flowers', x: 22, y: 15, w: 1, h: 1 },
-  { id: 'd25', sprite: 'flowers', x: 35, y: 9, w: 1, h: 1 },
-  { id: 'd26', sprite: 'flowers', x: 3, y: 16, w: 1, h: 1 },
+  createDecoration('d20', 'flowers', 3, 9, 1, 1, 0xf3b6cf),
+  createDecoration('d21', 'flowers', 15, 9, 1, 1, 0xf3b6cf),
+  createDecoration('d22', 'flowers', 35, 12, 1, 1, 0xf3b6cf),
+  createDecoration('d23', 'flowers', 22, 23, 1, 1, 0xf3b6cf),
+  createDecoration('d24', 'flowers', 34, 23, 1, 1, 0xf3b6cf),
+  createDecoration('d25', 'flowers', 47, 13, 1, 1, 0xf3b6cf),
+  createDecoration('d26', 'flowers', 3, 16, 1, 1, 0xf3b6cf),
 
   // Rocks
-  { id: 'd27', sprite: 'small_rocks', x: 14, y: 14, w: 1, h: 1 },
-  { id: 'd28', sprite: 'small_rocks', x: 30, y: 9, w: 1, h: 1 },
-  { id: 'd29', sprite: 'small_rocks', x: 2, y: 23, w: 1, h: 1 },
-  { id: 'd30', sprite: 'small_rocks', x: 36, y: 23, w: 1, h: 1 },
+  createDecoration('d27', 'small_rocks', 14, 14, 1, 1, 0x8b8f98),
+  createDecoration('d28', 'small_rocks', 42, 9, 1, 1, 0x8b8f98),
+  createDecoration('d29', 'small_rocks', 4, 39, 1, 1, 0x8b8f98),
+  createDecoration('d30', 'small_rocks', 54, 39, 1, 1, 0x8b8f98),
 
   // Benches along paths near town square
-  { id: 'd31', sprite: 'bench', x: 16, y: 11, w: 1.5, h: 1 },
-  { id: 'd32', sprite: 'bench', x: 22, y: 11, w: 1.5, h: 1 },
-  { id: 'd33', sprite: 'bench', x: 16, y: 16, w: 1.5, h: 1 },
+  createDecoration('d31', 'bench', 24, 17, 1.5, 1, 0x8b6b43),
+  createDecoration('d32', 'bench', 33, 17, 1.5, 1, 0x8b6b43),
+  createDecoration('d33', 'bench', 26, 24, 1.5, 1, 0x8b6b43),
 
   // Lake shore reeds
-  { id: 'd34', sprite: 'reeds', x: 6, y: 24, w: 1, h: 1 },
-  { id: 'd35', sprite: 'reeds', x: 9, y: 24, w: 1, h: 1 },
-  { id: 'd36', sprite: 'reeds', x: 13, y: 24, w: 1, h: 1 },
-  { id: 'd37', sprite: 'reeds', x: 16, y: 24, w: 1, h: 1 },
-  { id: 'd38', sprite: 'reeds', x: 24, y: 24, w: 1, h: 1 },
-  { id: 'd39', sprite: 'reeds', x: 27, y: 24, w: 1, h: 1 },
-  { id: 'd40', sprite: 'reeds', x: 30, y: 24, w: 1, h: 1 },
-  { id: 'd41', sprite: 'reeds', x: 33, y: 24, w: 1, h: 1 },
+  createDecoration('d34', 'reeds', 9, 41, 1, 1, 0x9bb56d),
+  createDecoration('d35', 'reeds', 13, 41, 1, 1, 0x9bb56d),
+  createDecoration('d36', 'reeds', 18, 41, 1, 1, 0x9bb56d),
+  createDecoration('d37', 'reeds', 23, 41, 1, 1, 0x9bb56d),
+  createDecoration('d38', 'reeds', 37, 41, 1, 1, 0x9bb56d),
+  createDecoration('d39', 'reeds', 42, 41, 1, 1, 0x9bb56d),
+  createDecoration('d40', 'reeds', 47, 41, 1, 1, 0x9bb56d),
+  createDecoration('d41', 'reeds', 50, 41, 1, 1, 0x9bb56d),
 
   // More small rocks at lake shore
-  { id: 'd42', sprite: 'small_rocks', x: 8, y: 24, w: 1, h: 1 },
-  { id: 'd43', sprite: 'small_rocks', x: 15, y: 24, w: 1, h: 1 },
-  { id: 'd44', sprite: 'small_rocks', x: 26, y: 24, w: 1, h: 1 },
-  { id: 'd45', sprite: 'small_rocks', x: 32, y: 24, w: 1, h: 1 },
+  createDecoration('d42', 'small_rocks', 12, 41, 1, 1, 0x8b8f98),
+  createDecoration('d43', 'small_rocks', 20, 41, 1, 1, 0x8b8f98),
+  createDecoration('d44', 'small_rocks', 39, 41, 1, 1, 0x8b8f98),
+  createDecoration('d45', 'small_rocks', 46, 41, 1, 1, 0x8b8f98),
 ];
 
 export const MAP_DATA = {
   width: W,
   height: H,
   tileSize: 32,
+  projection: {
+    mode: 'isometric' as const,
+    logicalTileSize: 32,
+    ...DEFAULT_ISO_CONFIG,
+  },
   collision: generateCollision(),
   groundTiles: generateGroundTiles(),
   terrainGrid: generateTerrainGrid(),
   decorations: DECORATIONS,
   buildings: [
-    { id: 'home_1', label: 'Home 1', x: 4, y: 3, w: 4, h: 3, color: 0x8b4513 },
-    { id: 'home_2', label: 'Home 2', x: 12, y: 3, w: 4, h: 3, color: 0xa0522d },
-    { id: 'workshop', label: 'Workshop', x: 26, y: 3, w: 4, h: 3, color: 0x808080 },
-    { id: 'garden', label: 'Garden', x: 6, y: 12, w: 4, h: 3, color: 0x228b22 },
-    { id: 'town_square', label: 'Town Square', x: 17, y: 12, w: 6, h: 4, color: 0xdaa520 },
-    { id: 'store', label: 'Store', x: 26, y: 12, w: 4, h: 3, color: 0x4169e1 },
-    { id: 'home_3', label: 'Home 3', x: 4, y: 18, w: 4, h: 3, color: 0xcd853f },
-    { id: 'cafe', label: 'Café', x: 13, y: 18, w: 4, h: 3, color: 0xb22222 },
-    { id: 'home_4', label: 'Home 4', x: 22, y: 18, w: 4, h: 3, color: 0xd2691e },
-    { id: 'home_5', label: 'Home 5', x: 30, y: 18, w: 4, h: 3, color: 0x8fbc8f },
-    { id: 'home_6', label: 'Home 6', x: 20, y: 3, w: 4, h: 3, color: 0x6a5acd },
-    { id: 'home_7', label: 'Home 7', x: 34, y: 3, w: 4, h: 3, color: 0xbc8f8f },
-    { id: 'home_8', label: 'Home 8', x: 34, y: 12, w: 4, h: 3, color: 0x5f9ea0 },
-    { id: 'home_9', label: 'Home 9', x: 12, y: 8, w: 4, h: 3, color: 0xc0392b },
-    { id: 'home_10', label: 'Home 10', x: 20, y: 8, w: 4, h: 3, color: 0x2e86c1 },
-    { id: 'home_11', label: 'Home 11', x: 12, y: 22, w: 4, h: 3, color: 0xd4ac0d },
-    { id: 'home_12', label: 'Home 12', x: 28, y: 22, w: 4, h: 3, color: 0x7d8c8e },
-  ],
+    createBuilding('home_1', 'Home 1', 4, 3, 4, 3, 0x8b4513),
+    createBuilding('home_2', 'Home 2', 16, 3, 4, 3, 0xa0522d),
+    createBuilding('workshop', 'Workshop', 40, 3, 4, 3, 0x808080),
+    createBuilding('garden', 'Garden', 6, 18, 4, 3, 0x228b22),
+    createBuilding('town_square', 'Town Square', 25, 18, 8, 5, 0xdaa520),
+    createBuilding('store', 'Store', 42, 18, 4, 3, 0x4169e1),
+    createBuilding('home_3', 'Home 3', 4, 28, 4, 3, 0xcd853f),
+    createBuilding('cafe', 'Café', 18, 28, 4, 3, 0xb22222),
+    createBuilding('home_4', 'Home 4', 32, 28, 4, 3, 0xd2691e),
+    createBuilding('home_5', 'Home 5', 46, 28, 4, 3, 0x8fbc8f),
+    createBuilding('home_6', 'Home 6', 28, 3, 4, 3, 0x6a5acd),
+    createBuilding('home_7', 'Home 7', 52, 3, 4, 3, 0xbc8f8f),
+    createBuilding('home_8', 'Home 8', 52, 18, 4, 3, 0x5f9ea0),
+    createBuilding('home_9', 'Home 9', 16, 11, 4, 3, 0xc0392b),
+    createBuilding('home_10', 'Home 10', 28, 11, 4, 3, 0x2e86c1),
+    createBuilding('home_11', 'Home 11', 16, 36, 4, 3, 0xd4ac0d),
+    createBuilding('home_12', 'Home 12', 38, 36, 4, 3, 0x7d8c8e),
+  ] as MapBuilding[],
 };

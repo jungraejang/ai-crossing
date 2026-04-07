@@ -1,27 +1,26 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { Application, Container, Graphics, Text, TextStyle, Sprite, Assets, Texture, Rectangle } from 'pixi.js';
-import { useGameStore } from '@/stores/gameStore';
-import type { SpeechBubble } from '@/stores/gameStore';
-import { useUIStore } from '@/stores/uiStore';
+import { Application, Container, Graphics, Sprite, Text, TextStyle, Texture } from 'pixi.js';
+import { ACTION_LABELS, type Direction, type Villager } from '@ai-crossing/shared';
 import { initializeGame } from '@/lib/initGame';
-import { MAP_DATA } from '@/lib/mapData';
-import type { TerrainType, MapDecoration } from '@/lib/mapData';
-import { ACTION_LABELS } from '@ai-crossing/shared';
-import type { Villager, Direction } from '@ai-crossing/shared';
+import { loadIsometricAssets, type IsometricAssetBundle, type VillagerTextureSet } from '@/lib/isometricAssets';
+import {
+  DEFAULT_ISO_CONFIG,
+  getDepthSortKey,
+  getFootprintCenter,
+  getProjectedMapBounds,
+  gridToScreen,
+  screenToGrid,
+  type IsoProjectionConfig,
+} from '@/lib/isometric';
+import { MAP_DATA, type MapBuilding, type MapDecoration, type TerrainType } from '@/lib/mapData';
+import { pickVillagerAtScreenPoint } from '@/lib/villagerPicking';
+import { useGameStore } from '@/stores/gameStore';
+import { useUIStore } from '@/stores/uiStore';
 
-const TILE = MAP_DATA.tileSize;
-
-function destroyContainerChildren(container: Container) {
-  while (container.children.length > 0) {
-    const child = container.children[0]!;
-    container.removeChild(child);
-    child.destroy({ children: true });
-  }
-}
-const WALK_FRAME_COUNT = 4;
-const WALK_ANIM_SPEED = 150;
+const ISO: IsoProjectionConfig = MAP_DATA.projection ?? DEFAULT_ISO_CONFIG;
+const MAP_BOUNDS = getProjectedMapBounds(MAP_DATA.width, MAP_DATA.height, ISO);
 
 const VILLAGER_IDS = [
   'maple', 'jasper', 'luna', 'rowan', 'sage', 'felix',
@@ -30,183 +29,631 @@ const VILLAGER_IDS = [
   'slate', 'poppy', 'reed', 'dusk', 'cinder', 'flint',
 ];
 
-const DIRECTION_MAP: Record<Direction, string> = {
-  down: 'south',
-  up: 'north',
-  left: 'west',
-  right: 'east',
-};
-
 const VILLAGER_COLORS: Record<string, number> = {
-  maple: 0xff6b6b, jasper: 0x51cf66, luna: 0x845ef7, rowan: 0xff922b,
-  sage: 0x20c997, felix: 0xfcc419, coral: 0xf06595, finn: 0x339af0,
-  ivy: 0x2b8a3e, milo: 0xe67700, pearl: 0xda77f2, otto: 0x868e96,
-  hazel: 0xc2185b, cliff: 0x795548, wren: 0x4fc3f7, birch: 0xaed581,
-  ember: 0xff7043, fern: 0x66bb6a, slate: 0x78909c, poppy: 0xef5350,
-  reed: 0x558b2f, dusk: 0x5c6bc0, cinder: 0xd4a373, flint: 0x6d4c41,
+  maple: 0xff8c7a, jasper: 0x73c474, luna: 0xa97dff, rowan: 0xd5904c,
+  sage: 0x64c1a3, felix: 0xf1c553, coral: 0xf28ab0, finn: 0x5ea8f6,
+  ivy: 0x5ea65b, milo: 0xf4a259, pearl: 0xe5ccff, otto: 0x9097a1,
+  hazel: 0xd56a7f, cliff: 0xa57a5a, wren: 0x90d7ff, birch: 0xb8d57d,
+  ember: 0xff8f5a, fern: 0x80d177, slate: 0x93a5b2, poppy: 0xff6f6f,
+  reed: 0x759d52, dusk: 0x6f77d6, cinder: 0xd9a57d, flint: 0x826d5c,
 };
 
-const GROUND_COLORS: Record<number, number> = {
-  1: 0x4a7c59, 2: 0x3d6b4e, 3: 0x2980b9, 4: 0x8b6914,
+const TERRAIN_COLORS: Record<TerrainType, number> = {
+  grass: 0x5d9c59,
+  water: 0x4c8ed9,
+  dirt: 0xa57a4e,
+  cobble: 0xb7a58d,
+  bridge: 0x9e7643,
 };
 
-let sleepTexture: Texture | null = null;
+const DIRECTION_ROTATIONS: Record<Direction, number> = {
+  north: -Math.PI / 2,
+  northEast: -Math.PI / 4,
+  east: 0,
+  southEast: Math.PI / 4,
+  south: Math.PI / 2,
+  southWest: (3 * Math.PI) / 4,
+  west: Math.PI,
+  northWest: (-3 * Math.PI) / 4,
+};
+
+const WALK_FRAME_DURATION_MS = 140;
+
+const cachedStyles = {
+  buildingLabel: new TextStyle({
+    fontSize: 10,
+    fill: 0xffffff,
+    fontFamily: 'monospace',
+    dropShadow: { color: 0x000000, distance: 1, alpha: 0.85 },
+  }),
+  villagerName: new TextStyle({
+    fontSize: 10,
+    fill: 0xffffff,
+    fontFamily: 'monospace',
+    dropShadow: { color: 0x000000, distance: 1, alpha: 0.75 },
+  }),
+  villagerNameBold: new TextStyle({
+    fontSize: 10,
+    fill: 0xffffff,
+    fontFamily: 'monospace',
+    fontWeight: 'bold',
+    dropShadow: { color: 0x000000, distance: 1, alpha: 0.75 },
+  }),
+  villagerAction: new TextStyle({
+    fontSize: 9,
+    fill: 0xdadada,
+    fontFamily: 'monospace',
+  }),
+  bubbleText: new TextStyle({
+    fontSize: 8,
+    fill: 0x1a1a2e,
+    fontFamily: '"Press Start 2P", "Courier New", monospace',
+    wordWrap: true,
+    wordWrapWidth: 130,
+    lineHeight: 14,
+    letterSpacing: -0.5,
+  }),
+  sleepText: new TextStyle({
+    fontSize: 14,
+    fill: 0xf8f8f0,
+    fontFamily: 'monospace',
+    fontWeight: 'bold',
+    dropShadow: { color: 0x222034, distance: 1, alpha: 0.8 },
+  }),
+};
+
+interface BuildingVisual {
+  roof: Container;
+  label: Text;
+  occlusionMask: Graphics;
+  hasTexture: boolean;
+}
+
+interface VillagerVisual {
+  root: Container;
+  selection: Graphics;
+  shadow: Sprite;
+  sprite: Sprite;
+  body: Graphics;
+  directionMarker: Graphics;
+  nameLabel: Text;
+  actionLabel: Text;
+  sleepLabel: Text;
+}
+
 let shadowTexture: Texture | null = null;
 
-function createSleepTexture(): Texture {
-  if (sleepTexture) return sleepTexture;
-  const canvas = document.createElement('canvas');
-  canvas.width = 48;
-  canvas.height = 24;
-  const ctx = canvas.getContext('2d')!;
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
 
-  const outline = '#222034';
-  const fill = '#f8f8f0';
-
-  const drawPixelZ = (x: number, y: number, s: number) => {
-    ctx.fillStyle = outline;
-    ctx.fillRect(x, y, s * 4, s);
-    ctx.fillRect(x + s * 3, y + s, s, s);
-    ctx.fillRect(x + s * 2, y + s * 2, s, s);
-    ctx.fillRect(x + s, y + s * 3, s, s);
-    ctx.fillRect(x, y + s * 4, s * 4, s);
-
-    ctx.fillStyle = fill;
-    ctx.fillRect(x + s, y + 1, s * 2, s - 2);
-    ctx.fillRect(x + s * 3, y + s + 1, s - 1, s - 2);
-    ctx.fillRect(x + s * 2, y + s * 2 + 1, s - 1, s - 2);
-    ctx.fillRect(x + s, y + s * 3 + 1, s - 1, s - 2);
-    ctx.fillRect(x + s, y + s * 4 + 1, s * 2, s - 2);
-  };
-
-  drawPixelZ(2, 10, 2);
-  drawPixelZ(16, 5, 2);
-  drawPixelZ(30, 1, 2);
-
-  sleepTexture = Texture.from(canvas);
-  return sleepTexture;
+function shadeColor(color: number, factor: number): number {
+  const r = clamp(Math.round(((color >> 16) & 0xff) * factor), 0, 255);
+  const g = clamp(Math.round(((color >> 8) & 0xff) * factor), 0, 255);
+  const b = clamp(Math.round((color & 0xff) * factor), 0, 255);
+  return (r << 16) | (g << 8) | b;
 }
 
 function createShadowTexture(): Texture {
   if (shadowTexture) return shadowTexture;
   const canvas = document.createElement('canvas');
-  canvas.width = 48;
-  canvas.height = 20;
-  const ctx = canvas.getContext('2d')!;
-  ctx.fillStyle = 'rgba(0,0,0,0.2)';
+  canvas.width = 96;
+  canvas.height = 48;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) {
+    shadowTexture = Texture.WHITE;
+    return shadowTexture;
+  }
+
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
   ctx.beginPath();
-  ctx.ellipse(24, 10, 18, 6, 0, 0, Math.PI * 2);
+  ctx.ellipse(48, 24, 28, 12, 0, 0, Math.PI * 2);
   ctx.fill();
+
   shadowTexture = Texture.from(canvas);
   return shadowTexture;
 }
 
-const spriteTextures: Record<string, Texture> = {};
-const walkTextures: Record<string, Texture[]> = {};
-const tilesetTextures: Record<string, Texture> = {};
-const tilesetMeta: Record<string, { tiles: Array<{ corners: Record<string, string>; bounding_box: { x: number; y: number; width: number; height: number } }> }> = {};
-const buildingTextures: Record<string, Texture> = {};
-const decorationTextures: Record<string, Texture> = {};
-let bridgeTexture: Texture | null = null;
-let spritesLoaded = false;
+function beginPolygon(graphics: Graphics, points: Array<[number, number]>) {
+  graphics.moveTo(points[0]![0], points[0]![1]);
+  for (let index = 1; index < points.length; index++) {
+    graphics.lineTo(points[index]![0], points[index]![1]);
+  }
+  graphics.closePath();
+}
 
-async function loadAllSprites() {
-  if (spritesLoaded) return;
+function drawPolygon(
+  graphics: Graphics,
+  points: Array<[number, number]>,
+  fillColor: number,
+  fillAlpha = 1,
+  strokeColor?: number,
+  strokeAlpha = 1,
+  strokeWidth = 1,
+) {
+  beginPolygon(graphics, points);
+  graphics.fill({ color: fillColor, alpha: fillAlpha });
+  if (strokeColor !== undefined) {
+    beginPolygon(graphics, points);
+    graphics.stroke({ color: strokeColor, alpha: strokeAlpha, width: strokeWidth });
+  }
+}
 
-  const promises: Promise<void>[] = [];
+function getTileDiamondPoints(centerX: number, centerY: number): Array<[number, number]> {
+  return [
+    [centerX, centerY - ISO.tileHeight / 2],
+    [centerX + ISO.tileWidth / 2, centerY],
+    [centerX, centerY + ISO.tileHeight / 2],
+    [centerX - ISO.tileWidth / 2, centerY],
+  ];
+}
 
-  for (const id of VILLAGER_IDS) {
-    for (const dir of ['south', 'north', 'east', 'west']) {
-      const key = `${id}_${dir}`;
-      promises.push(
-        Assets.load(`/sprites/${key}.png`).then((tex: Texture) => {
-          spriteTextures[key] = tex;
-        }).catch(() => {})
-      );
+function getMapCenter(app: Application): { x: number; y: number } {
+  return {
+    x: app.screen.width / 2 - (MAP_BOUNDS.minX + MAP_BOUNDS.maxX) / 2,
+    y: app.screen.height / 2 - (MAP_BOUNDS.minY + MAP_BOUNDS.maxY) / 2 - ISO.tileHeight * 1.5,
+  };
+}
 
-      const walkKey = `${id}_walk_${dir}`;
-      walkTextures[walkKey] = [];
-      for (let f = 0; f < WALK_FRAME_COUNT; f++) {
-        promises.push(
-          Assets.load(`/sprites/${walkKey}_${f}.png`).then((tex: Texture) => {
-            if (!walkTextures[walkKey]) walkTextures[walkKey] = [];
-            walkTextures[walkKey]![f] = tex;
-          }).catch(() => {})
-        );
+function syncCameraStore(world: Container) {
+  useUIStore.getState().setCamera(world.x, world.y);
+  useUIStore.getState().setZoom(world.scale.x);
+}
+
+function clampWorldPosition(world: Container, app: Application) {
+  const paddingX = ISO.tileWidth * 1.5;
+  const paddingY = ISO.tileHeight * 2.5;
+  const scaledWidth = MAP_BOUNDS.width * world.scale.x;
+  const scaledHeight = MAP_BOUNDS.height * world.scale.y;
+
+  if (scaledWidth + paddingX * 2 <= app.screen.width) {
+    world.x = app.screen.width / 2 - ((MAP_BOUNDS.minX + MAP_BOUNDS.maxX) / 2) * world.scale.x;
+  } else {
+    const minX = app.screen.width - paddingX - MAP_BOUNDS.maxX * world.scale.x;
+    const maxX = paddingX - MAP_BOUNDS.minX * world.scale.x;
+    world.x = clamp(world.x, minX, maxX);
+  }
+
+  if (scaledHeight + paddingY * 2 <= app.screen.height) {
+    world.y = app.screen.height / 2 - ((MAP_BOUNDS.minY + MAP_BOUNDS.maxY) / 2) * world.scale.y;
+  } else {
+    const minY = app.screen.height - paddingY - MAP_BOUNDS.maxY * world.scale.y;
+    const maxY = paddingY - MAP_BOUNDS.minY * world.scale.y;
+    world.y = clamp(world.y, minY, maxY);
+  }
+}
+
+function zoomWorldAtScreenPoint(
+  world: Container,
+  app: Application,
+  pointerX: number,
+  pointerY: number,
+  newScale: number,
+  centerOnPoint = false,
+) {
+  const localX = (pointerX - world.x) / world.scale.x;
+  const localY = (pointerY - world.y) / world.scale.y;
+
+  world.scale.set(newScale, newScale);
+
+  if (centerOnPoint) {
+    world.x = app.screen.width / 2 - localX * newScale;
+    world.y = app.screen.height / 2 - localY * newScale;
+  } else {
+    world.x = pointerX - localX * newScale;
+    world.y = pointerY - localY * newScale;
+  }
+
+  clampWorldPosition(world, app);
+  syncCameraStore(world);
+}
+
+function drawTerrain(container: Container, assets: IsometricAssetBundle) {
+  for (let y = 0; y < MAP_DATA.height; y++) {
+    for (let x = 0; x < MAP_DATA.width; x++) {
+      const terrain = MAP_DATA.terrainGrid[y]?.[x] ?? 'grass';
+      const center = getFootprintCenter(x, y, ISO);
+      const texture = assets.terrain[terrain];
+
+      if (texture) {
+        const sprite = new Sprite(texture);
+        sprite.anchor.set(0.5);
+        sprite.x = center.x;
+        sprite.y = center.y;
+        sprite.width = ISO.tileWidth;
+        sprite.height = ISO.tileHeight;
+        container.addChild(sprite);
+        continue;
       }
+
+      const tile = new Graphics();
+      const points = getTileDiamondPoints(center.x, center.y);
+      const fill = TERRAIN_COLORS[terrain] ?? TERRAIN_COLORS.grass;
+      drawPolygon(tile, points, fill, 1, shadeColor(fill, 0.65), 0.8, 1);
+
+      if (terrain === 'water') {
+        tile.moveTo(center.x - ISO.tileWidth * 0.18, center.y - 2);
+        tile.lineTo(center.x + ISO.tileWidth * 0.12, center.y - ISO.tileHeight * 0.16);
+        tile.stroke({ color: 0xd6f4ff, alpha: 0.4, width: 1 });
+      }
+
+      if (terrain === 'bridge') {
+        for (let step = -1; step <= 1; step++) {
+          const offset = step * 8;
+          tile.moveTo(center.x - ISO.tileWidth * 0.18, center.y + offset * 0.1);
+          tile.lineTo(center.x + ISO.tileWidth * 0.18, center.y + offset * 0.1);
+        }
+        tile.stroke({ color: 0x5e4126, alpha: 0.6, width: 1 });
+      }
+
+      container.addChild(tile);
+    }
+  }
+}
+
+function getDecorationAnchor(decoration: MapDecoration) {
+  return gridToScreen(decoration.x + decoration.w / 2, decoration.y + decoration.h, ISO);
+}
+
+function drawDecorationFallback(graphics: Graphics, decoration: MapDecoration) {
+  const tint = decoration.render.tint ?? 0xffffff;
+
+  switch (decoration.sprite) {
+    case 'oak_tree':
+    case 'pine_tree':
+    case 'cherry_tree':
+      graphics.roundRect(-4, -24, 8, 18, 2).fill({ color: 0x6a4a2f });
+      graphics.ellipse(0, -32, 16, 14).fill({ color: tint });
+      graphics.ellipse(0, -42, 12, 10).fill({ color: shadeColor(tint, 1.08) });
+      break;
+    case 'bush':
+      graphics.ellipse(0, -8, 12, 8).fill({ color: tint });
+      break;
+    case 'flowers':
+      graphics.circle(-6, -7, 3).fill({ color: tint });
+      graphics.circle(0, -10, 3).fill({ color: 0xf8f8f0 });
+      graphics.circle(6, -7, 3).fill({ color: tint });
+      break;
+    case 'small_rocks':
+      graphics.circle(-5, -4, 4).fill({ color: tint });
+      graphics.circle(2, -6, 5).fill({ color: shadeColor(tint, 1.1) });
+      graphics.circle(8, -3, 3).fill({ color: tint });
+      break;
+    case 'bench':
+      graphics.moveTo(-12, -7);
+      graphics.lineTo(0, -13);
+      graphics.lineTo(12, -7);
+      graphics.lineTo(0, -1);
+      graphics.closePath();
+      graphics.fill({ color: tint });
+      graphics.rect(-10, -1, 3, 9).fill({ color: shadeColor(tint, 0.7) });
+      graphics.rect(7, -1, 3, 9).fill({ color: shadeColor(tint, 0.7) });
+      break;
+    case 'reeds':
+      for (let offset = -4; offset <= 4; offset += 4) {
+        graphics.moveTo(offset, 0);
+        graphics.lineTo(offset - 2, -10);
+      }
+      graphics.stroke({ color: tint, width: 2, alpha: 0.9 });
+      break;
+    default:
+      graphics.circle(0, -6, 6).fill({ color: tint });
+      break;
+  }
+}
+
+function addDecorations(container: Container, assets: IsometricAssetBundle) {
+  for (const decoration of MAP_DATA.decorations) {
+    const anchor = getDecorationAnchor(decoration);
+    const node = new Container();
+    node.x = anchor.x;
+    node.y = anchor.y;
+    node.zIndex = getDepthSortKey(
+      decoration.x + decoration.w / 2,
+      decoration.y + decoration.h,
+      decoration.render.elevation ?? 0,
+      decoration.render.sortOffset ?? 0,
+    );
+
+    const texture = assets.decorations[decoration.id];
+    if (texture) {
+      const sprite = new Sprite(texture);
+      sprite.anchor.set(decoration.render.anchor.x, decoration.render.anchor.y);
+      sprite.width = ISO.tileWidth * Math.max(1, decoration.w);
+      sprite.height = ISO.tileHeight * (Math.max(1, decoration.h) + 1.5);
+      node.addChild(sprite);
+    } else {
+      const graphics = new Graphics();
+      drawDecorationFallback(graphics, decoration);
+      node.addChild(graphics);
+    }
+
+    container.addChild(node);
+  }
+}
+
+function getBuildingFootprint(building: MapBuilding): Array<[number, number]> {
+  return [
+    [gridToScreen(building.x, building.y, ISO).x, gridToScreen(building.x, building.y, ISO).y],
+    [gridToScreen(building.x + building.w, building.y, ISO).x, gridToScreen(building.x + building.w, building.y, ISO).y],
+    [gridToScreen(building.x + building.w, building.y + building.h, ISO).x, gridToScreen(building.x + building.w, building.y + building.h, ISO).y],
+    [gridToScreen(building.x, building.y + building.h, ISO).x, gridToScreen(building.x, building.y + building.h, ISO).y],
+  ];
+}
+
+function drawBuildingFallback(base: Graphics, roof: Graphics, building: MapBuilding) {
+  const footprint = getBuildingFootprint(building);
+  const heightPx = (building.render.elevation ?? building.h) * ISO.elevationStep + ISO.tileHeight * 0.9;
+  const top = footprint.map(([x, y]) => [x, y - heightPx] as [number, number]);
+  const tint = building.render.tint ?? building.color;
+
+  base.clear();
+  roof.clear();
+
+  const westFace: Array<[number, number]> = [top[3]!, top[2]!, footprint[2]!, footprint[3]!];
+  const eastFace: Array<[number, number]> = [top[1]!, top[2]!, footprint[2]!, footprint[1]!];
+
+  drawPolygon(base, westFace, shadeColor(tint, 0.78), 1, shadeColor(tint, 0.45), 0.85, 1);
+  drawPolygon(base, eastFace, shadeColor(tint, 0.62), 1, shadeColor(tint, 0.42), 0.85, 1);
+  drawPolygon(roof, top, shadeColor(tint, 1.06), 1, shadeColor(tint, 0.52), 0.9, 1);
+}
+
+function addBuildings(
+  container: Container,
+  overlayContainer: Container,
+  assets: IsometricAssetBundle,
+): Map<string, BuildingVisual> {
+  const visuals = new Map<string, BuildingVisual>();
+
+  for (const building of MAP_DATA.buildings) {
+    const depth = getDepthSortKey(
+      building.x + building.w / 2,
+      building.y + building.h,
+      building.render.elevation ?? 0,
+      building.render.sortOffset ?? 0,
+    );
+
+    const base = new Container();
+    base.zIndex = depth;
+    const baseGraphics = new Graphics();
+    base.addChild(baseGraphics);
+
+    const roof = new Container();
+    roof.zIndex = depth + 150;
+    const roofGraphics = new Graphics();
+    roof.addChild(roofGraphics);
+    const occlusionMask = new Graphics();
+    roof.addChild(occlusionMask);
+
+    const texture = assets.buildings[building.id];
+    if (texture) {
+      const sprite = new Sprite(texture);
+      const anchor = gridToScreen(building.x + building.w / 2, building.y + building.h, ISO);
+      sprite.anchor.set(building.render.anchor.x, building.render.anchor.y);
+      sprite.x = anchor.x;
+      sprite.y = anchor.y;
+      sprite.width = ISO.tileWidth * (building.w + building.h * 0.5);
+      sprite.height = ISO.tileHeight * ((building.render.elevation ?? building.h) + building.h + 2);
+      roof.addChild(sprite);
+    } else {
+      drawBuildingFallback(baseGraphics, roofGraphics, building);
+    }
+
+    container.addChild(base);
+    container.addChild(roof);
+
+    const labelAnchor = gridToScreen(
+      building.x + building.w / 2,
+      building.y + building.h / 2,
+      ISO,
+      building.render.elevation ?? 0,
+    );
+    const label = new Text({ text: building.label, style: cachedStyles.buildingLabel });
+    label.anchor.set(0.5, 1);
+    label.x = labelAnchor.x;
+    label.y = labelAnchor.y - ISO.tileHeight * 0.7;
+    label.zIndex = depth + 160;
+    overlayContainer.addChild(label);
+
+    visuals.set(building.id, { roof, label, occlusionMask, hasTexture: !!texture });
+  }
+
+  return visuals;
+}
+
+function createVillagerVisual(sceneContainer: Container, overlayContainer: Container): VillagerVisual {
+  const root = new Container();
+  const selection = new Graphics();
+  const shadow = new Sprite(createShadowTexture());
+  shadow.anchor.set(0.5);
+  shadow.width = ISO.tileWidth * 0.58;
+  shadow.height = ISO.tileHeight * 0.55;
+
+  const sprite = new Sprite();
+  sprite.anchor.set(0.5, 1);
+
+  const body = new Graphics();
+  const directionMarker = new Graphics();
+
+  root.addChild(selection);
+  root.addChild(shadow);
+  root.addChild(sprite);
+  root.addChild(body);
+  root.addChild(directionMarker);
+
+  const nameLabel = new Text({ text: '', style: cachedStyles.villagerName });
+  nameLabel.anchor.set(0.5, 1);
+  const actionLabel = new Text({ text: '', style: cachedStyles.villagerAction });
+  actionLabel.anchor.set(0.5, 0);
+  const sleepLabel = new Text({ text: 'Zz', style: cachedStyles.sleepText });
+  sleepLabel.anchor.set(0.5, 1);
+  sleepLabel.visible = false;
+
+  sceneContainer.addChild(root);
+  overlayContainer.addChild(nameLabel);
+  overlayContainer.addChild(actionLabel);
+  overlayContainer.addChild(sleepLabel);
+
+  return {
+    root,
+    selection,
+    shadow,
+    sprite,
+    body,
+    directionMarker,
+    nameLabel,
+    actionLabel,
+    sleepLabel,
+  };
+}
+
+function getVillagerTexture(
+  assets: IsometricAssetBundle,
+  villagerId: string,
+  direction: Direction,
+  isMoving: boolean,
+  now: number,
+): Texture | null {
+  const villagerAssets: VillagerTextureSet | undefined = assets.villagers[villagerId];
+  if (!villagerAssets) return null;
+
+  if (isMoving) {
+    const walkFrames = villagerAssets.walk[direction];
+    if (walkFrames && walkFrames.length > 0) {
+      const frameIndex = Math.floor(now / WALK_FRAME_DURATION_MS) % walkFrames.length;
+      return walkFrames[frameIndex] ?? null;
     }
   }
 
-  for (const name of ['water_grass', 'grass_dirt', 'grass_cobble']) {
-    promises.push(
-      Assets.load(`/tilesets/${name}.png`).then((tex: Texture) => {
-        tilesetTextures[name] = tex;
-      }).catch(() => {})
-    );
-    promises.push(
-      fetch(`/tilesets/${name}_meta.json`).then((r) => r.json()).then((meta) => {
-        tilesetMeta[name] = meta.tileset_data ?? meta;
-      }).catch(() => {})
-    );
-  }
-
-  promises.push(
-    Assets.load('/tilesets/bridge.png').then((tex: Texture) => {
-      bridgeTexture = tex;
-    }).catch(() => {})
-  );
-
-  const buildingFiles: Record<string, string> = {
-    home_1: 'home_1', home_2: 'home_2', home_3: 'home_3',
-    home_4: 'home_4', home_5: 'home_5', home_6: 'home_6',
-    home_7: 'home_7', home_8: 'home_8', home_9: 'home_9',
-    home_10: 'home_10', home_11: 'home_11', home_12: 'home_12',
-    cafe: 'cafe', store: 'store', workshop: 'workshop',
-    garden: 'garden', town_square: 'fountain',
-  };
-
-  const decorationSpriteNames = [...new Set(MAP_DATA.decorations.map((d) => d.sprite))];
-  for (const name of decorationSpriteNames) {
-    promises.push(
-      Assets.load(`/decorations/${name}.png`).then((tex: Texture) => {
-        decorationTextures[name] = tex;
-      }).catch(() => {})
-    );
-  }
-
-  for (const [buildingId, fileName] of Object.entries(buildingFiles)) {
-    promises.push(
-      Assets.load(`/buildings/${fileName}.png`).then((tex: Texture) => {
-        buildingTextures[buildingId] = tex;
-      }).catch(() => {})
-    );
-  }
-
-  await Promise.all(promises);
-  spritesLoaded = true;
+  return villagerAssets.idle[direction] ?? null;
 }
 
-const walkFrameCache: Map<string, Texture[]> = new Map();
+function createVillagerBody(
+  pool: VillagerVisual,
+  villager: Villager,
+  isSelected: boolean,
+  texture: Texture | null,
+) {
+  pool.selection.clear();
+  pool.body.clear();
+  pool.directionMarker.clear();
 
-function getWalkFrame(villagerId: string, direction: string, timestamp: number): Texture | null {
-  const key = `${villagerId}_walk_${direction}`;
-  let validFrames = walkFrameCache.get(key);
-  if (!validFrames) {
-    const frames = walkTextures[key];
-    if (!frames || frames.length === 0) return null;
-    validFrames = frames.filter(Boolean);
-    if (validFrames.length === 0) return null;
-    walkFrameCache.set(key, validFrames);
+  if (isSelected) {
+    const selectionYOffset = -ISO.tileHeight * 0.32;
+    const ringPoints: Array<[number, number]> = [
+      [0, selectionYOffset - ISO.tileHeight * 0.15],
+      [ISO.tileWidth * 0.26, selectionYOffset],
+      [0, selectionYOffset + ISO.tileHeight * 0.15],
+      [-ISO.tileWidth * 0.26, selectionYOffset],
+    ];
+    drawPolygon(pool.selection, ringPoints, 0xffffff, 0.18, 0xffffff, 0.55, 1);
   }
 
-  const frameIndex = Math.floor(timestamp / WALK_ANIM_SPEED) % validFrames.length;
-  return validFrames[frameIndex] ?? null;
+  if (texture) {
+    pool.sprite.texture = texture;
+    pool.sprite.visible = true;
+    pool.sprite.width = ISO.tileWidth * 0.9;
+    pool.sprite.height = ISO.tileHeight * 2.6;
+    pool.body.visible = false;
+  } else {
+    pool.sprite.visible = false;
+    pool.body.visible = true;
+
+    const color = VILLAGER_COLORS[villager.profile.id] ?? 0xffffff;
+    pool.body.roundRect(-9, -32, 18, 20, 6).fill({ color });
+    pool.body.roundRect(-7, -16, 14, 16, 5).fill({ color: shadeColor(color, 0.9) });
+    pool.body.circle(0, -40, 9).fill({ color: shadeColor(color, 1.1) });
+    pool.body.stroke({ color: 0x1a1a1a, alpha: 0.9, width: 1 });
+
+    const rotation = DIRECTION_ROTATIONS[villager.state.facing] ?? DIRECTION_ROTATIONS.south;
+    const markerPoints: Array<[number, number]> = [
+      [0, -22],
+      [6, -12],
+      [-6, -12],
+    ];
+    const cos = Math.cos(rotation);
+    const sin = Math.sin(rotation);
+    const rotated = markerPoints.map(([x, y]) => [
+      x * cos - y * sin,
+      x * sin + y * cos,
+    ] as [number, number]);
+    drawPolygon(pool.directionMarker, rotated, 0xffffff, 0.55);
+  }
+}
+
+function drawSpeechBubble(container: Container, villager: Villager, text: string, alpha: number) {
+  const foot = getFootprintCenter(villager.state.x, villager.state.y, ISO);
+  const textObj = new Text({ text, style: cachedStyles.bubbleText });
+  textObj.anchor.set(0.5, 1);
+
+  const padX = 8;
+  const padY = 6;
+  const border = 2;
+  const bubbleWidth = textObj.width + padX * 2;
+  const bubbleHeight = textObj.height + padY * 2;
+  const bubbleX = foot.x - bubbleWidth / 2;
+  const bubbleY = foot.y - ISO.tileHeight * 2.7 - bubbleHeight;
+
+  const bg = new Graphics();
+  bg.alpha = alpha;
+  bg.roundRect(bubbleX, bubbleY, bubbleWidth, bubbleHeight, 4).fill({ color: 0xf8f8f0 });
+  bg.roundRect(bubbleX, bubbleY, bubbleWidth, bubbleHeight, 4).stroke({ color: 0x222034, width: border, alpha: 1 });
+
+  const pointerBaseY = bubbleY + bubbleHeight;
+  bg.moveTo(foot.x - 8, pointerBaseY);
+  bg.lineTo(foot.x + 8, pointerBaseY);
+  bg.lineTo(foot.x, pointerBaseY + 12);
+  bg.closePath();
+  bg.fill({ color: 0xf8f8f0 });
+  bg.moveTo(foot.x - 8, pointerBaseY);
+  bg.lineTo(foot.x + 8, pointerBaseY);
+  bg.lineTo(foot.x, pointerBaseY + 12);
+  bg.closePath();
+  bg.stroke({ color: 0x222034, width: border, alpha: 1 });
+
+  container.addChild(bg);
+  textObj.x = foot.x;
+  textObj.y = bubbleY + bubbleHeight - padY;
+  textObj.alpha = alpha;
+  container.addChild(textObj);
+}
+
+function updateLighting(overlay: Graphics, hour: number) {
+  overlay.clear();
+
+  let color = 0x000000;
+  let alpha = 0;
+  if (hour >= 5 && hour < 7) {
+    color = 0xffcc88;
+    alpha = 0.15;
+  } else if (hour >= 16 && hour < 19) {
+    color = 0xff8a55;
+    alpha = ((hour - 16) / 3) * 0.22;
+  } else if (hour >= 19 && hour < 21) {
+    color = 0x332255;
+    alpha = 0.2 + ((hour - 19) / 2) * 0.22;
+  } else if (hour >= 21 || hour < 5) {
+    color = 0x18203f;
+    alpha = 0.42;
+  }
+
+  if (alpha <= 0) return;
+
+  const corners: Array<[number, number]> = [
+    [gridToScreen(0, 0, ISO).x, gridToScreen(0, 0, ISO).y],
+    [gridToScreen(MAP_DATA.width, 0, ISO).x, gridToScreen(MAP_DATA.width, 0, ISO).y],
+    [gridToScreen(MAP_DATA.width, MAP_DATA.height, ISO).x, gridToScreen(MAP_DATA.width, MAP_DATA.height, ISO).y],
+    [gridToScreen(0, MAP_DATA.height, ISO).x, gridToScreen(0, MAP_DATA.height, ISO).y],
+  ];
+
+  drawPolygon(overlay, corners, color, alpha);
 }
 
 export default function GameCanvas() {
   const canvasRef = useRef<HTMLDivElement>(null);
   const appRef = useRef<Application | null>(null);
   const worldContainerRef = useRef<Container | null>(null);
+  const assetsRef = useRef<IsometricAssetBundle | null>(null);
   const [ready, setReady] = useState(false);
 
   const isDragging = useRef(false);
@@ -220,31 +667,37 @@ export default function GameCanvas() {
 
     (async () => {
       await app.init({
-        background: 0x1a1a2e,
+        background: 0x192028,
         resizeTo: canvasRef.current!,
-        antialias: false,
+        antialias: true,
         resolution: window.devicePixelRatio || 1,
         autoDensity: true,
       });
 
-      if (destroyed) {
+      if (destroyed || !canvasRef.current) {
         app.destroy();
         return;
       }
 
-      canvasRef.current!.appendChild(app.canvas as HTMLCanvasElement);
+      canvasRef.current.appendChild(app.canvas as HTMLCanvasElement);
       appRef.current = app;
 
       const worldContainer = new Container();
       app.stage.addChild(worldContainer);
+      worldContainer.sortableChildren = true;
       worldContainerRef.current = worldContainer;
 
-      worldContainer.x = app.screen.width / 2 - (MAP_DATA.width * TILE) / 2;
-      worldContainer.y = app.screen.height / 2 - (MAP_DATA.height * TILE) / 2;
+      const assets = await loadIsometricAssets(VILLAGER_IDS, MAP_DATA.buildings, MAP_DATA.decorations);
+      assetsRef.current = assets;
 
-      await loadAllSprites();
-      drawMap(worldContainer);
-      drawDecorations(worldContainer);
+      const { cameraX, cameraY, zoom } = useUIStore.getState();
+      const centered = getMapCenter(app);
+      worldContainer.scale.set(zoom, zoom);
+      worldContainer.x = cameraX === 0 && cameraY === 0 ? centered.x : cameraX;
+      worldContainer.y = cameraX === 0 && cameraY === 0 ? centered.y : cameraY;
+      clampWorldPosition(worldContainer, app);
+      syncCameraStore(worldContainer);
+
       initializeGame();
       setReady(true);
     })();
@@ -253,59 +706,36 @@ export default function GameCanvas() {
       destroyed = true;
       appRef.current?.destroy(true);
       appRef.current = null;
+      worldContainerRef.current = null;
     };
   }, []);
 
   useEffect(() => {
-    if (!ready || !appRef.current || !worldContainerRef.current) return;
+    if (!ready || !appRef.current || !worldContainerRef.current || !assetsRef.current) return;
 
     const app = appRef.current;
     const world = worldContainerRef.current;
+    const assets = assetsRef.current;
 
-    const buildingsContainer = new Container();
-    world.addChild(buildingsContainer);
-    const villagersContainer = new Container();
-    world.addChild(villagersContainer);
-    const labelsContainer = new Container();
-    world.addChild(labelsContainer);
+    const terrainContainer = new Container();
+    const sceneContainer = new Container();
+    sceneContainer.sortableChildren = true;
+    const overlayContainer = new Container();
+    overlayContainer.sortableChildren = true;
     const bubblesContainer = new Container();
-    world.addChild(bubblesContainer);
     const lightingOverlay = new Graphics();
+
+    world.addChild(terrainContainer);
+    world.addChild(sceneContainer);
+    world.addChild(overlayContainer);
+    world.addChild(bubblesContainer);
     world.addChild(lightingOverlay);
 
-    const bldgSprites: Map<string, Sprite> = new Map();
-    const bldgLabels: Map<string, Text> = new Map();
-    const bldgOccupiedState: Map<string, boolean> = new Map();
-    for (const b of MAP_DATA.buildings) {
-      const tex = buildingTextures[b.id];
-      if (tex) {
-        const s = new Sprite(tex);
-        s.x = b.x * TILE; s.y = b.y * TILE;
-        s.width = b.w * TILE; s.height = b.h * TILE;
-        buildingsContainer.addChild(s);
-        bldgSprites.set(b.id, s);
-      }
-      const lbl = new Text({ text: b.label, style: cachedStyles.buildingLabel });
-      lbl.x = b.x * TILE + (b.w * TILE) / 2;
-      lbl.y = b.y * TILE + 4;
-      lbl.anchor.set(0.5, 0);
-      buildingsContainer.addChild(lbl);
-      bldgLabels.set(b.id, lbl);
-      bldgOccupiedState.set(b.id, false);
-    }
+    drawTerrain(terrainContainer, assets);
+    addDecorations(sceneContainer, assets);
+    const buildingVisuals = addBuildings(sceneContainer, overlayContainer, assets);
 
-    const vPool: Map<
-      string,
-      {
-        shadow: Sprite;
-        sprite: Sprite;
-        fallback: Graphics;
-        nameLabel: Text;
-        actionLabel: Text;
-        selectionRing: Graphics;
-        sleepSprite: Sprite;
-      }
-    > = new Map();
+    const villagerPool = new Map<string, VillagerVisual>();
     let lastLightingHour = -1;
 
     const ticker = () => {
@@ -313,16 +743,38 @@ export default function GameCanvas() {
       const { selectedVillagerId } = useUIStore.getState();
       const now = Date.now();
 
-      for (const b of MAP_DATA.buildings) {
-        const hasInside = villagers.some((v) => v.state.x >= b.x && v.state.x < b.x + b.w && v.state.y >= b.y && v.state.y < b.y + b.h);
-        const prev = bldgOccupiedState.get(b.id);
-        if (prev !== hasInside) {
-          const s = bldgSprites.get(b.id);
-          if (s) s.alpha = hasInside ? 0.35 : 0.9;
-          const lbl = bldgLabels.get(b.id);
-          if (lbl) lbl.alpha = hasInside ? 0.5 : 1;
-          bldgOccupiedState.set(b.id, hasInside);
+      for (const building of MAP_DATA.buildings) {
+        const insideVillagers = villagers.filter(
+          (villager) =>
+            villager.state.x >= building.x &&
+            villager.state.x < building.x + building.w &&
+            villager.state.y >= building.y &&
+            villager.state.y < building.y + building.h,
+        );
+        const occupied = insideVillagers.length > 0;
+
+        const visual = buildingVisuals.get(building.id);
+        if (!visual) continue;
+
+        visual.occlusionMask.clear();
+        if (visual.hasTexture && occupied && building.render.roofFadeWhenOccupied) {
+          for (const villager of insideVillagers) {
+            const foot = getFootprintCenter(villager.state.x, villager.state.y, ISO);
+            visual.occlusionMask.ellipse(
+              foot.x,
+              foot.y - ISO.tileHeight * 0.95,
+              ISO.tileWidth * 0.32,
+              ISO.tileHeight * 0.95,
+            ).fill({ color: 0xffffff, alpha: 1 });
+          }
+          visual.roof.setMask({ mask: visual.occlusionMask, inverse: true });
+          visual.roof.alpha = 1;
+        } else {
+          visual.roof.mask = null;
+          visual.roof.alpha = 1;
         }
+
+        visual.label.alpha = occupied ? 0.5 : 1;
       }
 
       if (worldState.time.hour !== lastLightingHour) {
@@ -330,101 +782,69 @@ export default function GameCanvas() {
         lastLightingHour = worldState.time.hour;
       }
 
-      for (const v of villagers) {
-        const id = v.profile.id;
-        let pool = vPool.get(id);
+      for (const villager of villagers) {
+        let pool = villagerPool.get(villager.profile.id);
         if (!pool) {
-          const shadow = new Sprite(createShadowTexture());
-          shadow.anchor.set(0.5);
-          villagersContainer.addChild(shadow);
-          const selectionRing = new Graphics();
-          villagersContainer.addChild(selectionRing);
-          const spr = new Sprite();
-          spr.anchor.set(0.5, 0.5);
-          villagersContainer.addChild(spr);
-          const fb = new Graphics();
-          villagersContainer.addChild(fb);
-          const nl = new Text({ text: v.profile.name, style: cachedStyles.villagerName });
-          nl.anchor.set(0.5);
-          labelsContainer.addChild(nl);
-          const al = new Text({ text: '', style: cachedStyles.villagerAction });
-          al.anchor.set(0.5);
-          labelsContainer.addChild(al);
-          const sl = new Sprite(createSleepTexture());
-          sl.anchor.set(0.5);
-          sl.visible = false;
-          labelsContainer.addChild(sl);
-          pool = { shadow, sprite: spr, fallback: fb, nameLabel: nl, actionLabel: al, selectionRing, sleepSprite: sl };
-          vPool.set(id, pool);
+          pool = createVillagerVisual(sceneContainer, overlayContainer);
+          villagerPool.set(villager.profile.id, pool);
         }
 
-        const px = v.state.x * TILE;
-        const py = v.state.y * TILE;
-        const dirKey = DIRECTION_MAP[v.state.facing] ?? 'south';
-        const isSel = id === selectedVillagerId;
+        const foot = getFootprintCenter(villager.state.x, villager.state.y, ISO);
+        const selected = villager.profile.id === selectedVillagerId;
+        const texture = getVillagerTexture(
+          assets,
+          villager.profile.id,
+          villager.state.facing,
+          villager.state.isMoving,
+          now,
+        );
 
-        pool.shadow.x = px;
-        pool.shadow.y = py + TILE * 0.35;
-        pool.shadow.width = TILE * 0.9;
-        pool.shadow.height = TILE * 0.35;
+        pool.root.x = foot.x;
+        pool.root.y = foot.y;
+        pool.root.zIndex = getDepthSortKey(villager.state.x, villager.state.y, 0, 260);
+        pool.shadow.x = 0;
+        pool.shadow.y = -ISO.tileHeight * 0.7;
+        pool.shadow.alpha = villager.state.currentAction?.type === 'sleeping' ? 0.12 : 0.22;
 
-        pool.selectionRing.clear();
-        if (isSel) {
-          pool.selectionRing.circle(px, py, TILE * 0.6).fill({ color: 0xffffff, alpha: 0.25 });
-          pool.selectionRing.circle(px, py, TILE * 0.6).stroke({ color: 0xffffff, width: 1, alpha: 0.5 });
-        }
+        createVillagerBody(pool, villager, selected, texture);
 
-        let tex: Texture | null = null;
-        if (v.state.isMoving) tex = getWalkFrame(id, dirKey, now);
-        if (!tex) tex = spriteTextures[`${id}_${dirKey}`] ?? null;
+        pool.nameLabel.text = villager.profile.name;
+        pool.nameLabel.style = selected ? cachedStyles.villagerNameBold : cachedStyles.villagerName;
+        pool.nameLabel.x = foot.x;
+        pool.nameLabel.y = foot.y - ISO.tileHeight * 1.9;
+        pool.nameLabel.zIndex = pool.root.zIndex + 2;
 
-        if (tex) {
-          pool.sprite.texture = tex;
-          pool.sprite.x = px; pool.sprite.y = py;
-          pool.sprite.width = TILE * 1.4; pool.sprite.height = TILE * 1.4;
-          pool.sprite.visible = true;
-          pool.fallback.visible = false;
-        } else {
-          pool.sprite.visible = false;
-          pool.fallback.clear();
-          const color = VILLAGER_COLORS[id] ?? 0xffffff;
-          pool.fallback.circle(px, py, TILE * 0.4).fill({ color });
-          pool.fallback.circle(px, py, TILE * 0.4).stroke({ color: 0x000000, width: 1 });
-          pool.fallback.visible = true;
-        }
-
-        pool.nameLabel.text = v.profile.name;
-        pool.nameLabel.style = isSel ? cachedStyles.villagerNameBold : cachedStyles.villagerName;
-        pool.nameLabel.x = px; pool.nameLabel.y = py - TILE * 0.85;
-
-        if (isSel && v.state.currentAction) {
-          pool.actionLabel.text = ACTION_LABELS[v.state.currentAction.type] ?? '';
-          pool.actionLabel.x = px; pool.actionLabel.y = py + TILE * 0.8;
+        if (selected && villager.state.currentAction) {
+          pool.actionLabel.text = ACTION_LABELS[villager.state.currentAction.type] ?? '';
           pool.actionLabel.visible = true;
+          pool.actionLabel.x = foot.x;
+          pool.actionLabel.y = foot.y + ISO.tileHeight * 0.2;
+          pool.actionLabel.zIndex = pool.root.zIndex + 3;
         } else {
           pool.actionLabel.visible = false;
         }
 
-        if (v.state.currentAction?.type === 'sleeping') {
-          const bob = Math.sin(now / 350 + px * 0.01) * 3;
-          pool.sleepSprite.x = px + 10;
-          pool.sleepSprite.y = py - TILE * 1.35 + bob;
-          pool.sleepSprite.alpha = 0.7 + 0.3 * Math.sin(now / 500 + px * 0.02);
-          pool.sleepSprite.visible = true;
+        if (villager.state.currentAction?.type === 'sleeping') {
+          pool.sleepLabel.visible = true;
+          pool.sleepLabel.x = foot.x + 14;
+          pool.sleepLabel.y = foot.y - ISO.tileHeight * 2.8 + Math.sin(now / 300 + foot.x * 0.02) * 4;
+          pool.sleepLabel.alpha = 0.7 + 0.25 * Math.sin(now / 400 + foot.y * 0.02);
+          pool.sleepLabel.zIndex = pool.root.zIndex + 4;
         } else {
-          pool.sleepSprite.visible = false;
+          pool.sleepLabel.visible = false;
         }
       }
 
-      destroyContainerChildren(bubblesContainer);
+      destroyChildren(bubblesContainer);
       for (const bubble of speechBubbles) {
         if (now >= bubble.expiresAt || now < bubble.createdAt) continue;
-        const villager = villagers.find((v) => v.profile.id === bubble.villagerId);
+        const villager = villagers.find((entry) => entry.profile.id === bubble.villagerId);
         if (!villager) continue;
+
         const age = now - bubble.createdAt;
         const lifetime = bubble.expiresAt - bubble.createdAt;
-        const fadeStart = lifetime * 0.7;
-        const alpha = age > fadeStart ? 1 - (age - fadeStart) / (lifetime - fadeStart) : 1;
+        const fadeStart = lifetime * 0.72;
+        const alpha = age > fadeStart ? 1 - (age - fadeStart) / Math.max(1, lifetime - fadeStart) : 1;
         drawSpeechBubble(bubblesContainer, villager, bubble.text, alpha);
       }
     };
@@ -432,493 +852,107 @@ export default function GameCanvas() {
     app.ticker.add(ticker);
     return () => {
       app.ticker.remove(ticker);
-      world.removeChild(buildingsContainer);
-      world.removeChild(villagersContainer);
-      world.removeChild(labelsContainer);
-      world.removeChild(bubblesContainer);
-      world.removeChild(lightingOverlay);
-      buildingsContainer.destroy({ children: true });
-      villagersContainer.destroy({ children: true });
-      labelsContainer.destroy({ children: true });
-      bubblesContainer.destroy({ children: true });
-      lightingOverlay.destroy();
-      vPool.clear();
+      destroyChildren(world);
+      villagerPool.clear();
     };
   }, [ready]);
 
   useEffect(() => {
-    const el = canvasRef.current;
-    if (!el) return;
+    const element = canvasRef.current;
+    const app = appRef.current;
+    const world = worldContainerRef.current;
+    if (!ready || !element || !app || !world) return;
 
-    const onWheel = (e: WheelEvent) => {
-      e.preventDefault();
-      const world = worldContainerRef.current;
-      if (!world) return;
-      const scaleDelta = e.deltaY > 0 ? 0.95 : 1.05;
-      const newScale = Math.max(0.5, Math.min(3, world.scale.x * scaleDelta));
-      world.scale.set(newScale, newScale);
+    const onWheel = (event: WheelEvent) => {
+      event.preventDefault();
+      const rect = element.getBoundingClientRect();
+      const pointerX = event.clientX - rect.left;
+      const pointerY = event.clientY - rect.top;
+      const scaleDelta = event.deltaY > 0 ? 0.92 : 1.08;
+      const newScale = clamp(world.scale.x * scaleDelta, 0.55, 2.25);
+      zoomWorldAtScreenPoint(world, app, pointerX, pointerY, newScale);
     };
 
-    const onPointerDown = (e: PointerEvent) => {
+    const onPointerDown = (event: PointerEvent) => {
       isDragging.current = true;
-      dragStart.current = { x: e.clientX, y: e.clientY };
+      dragStart.current = { x: event.clientX, y: event.clientY };
     };
 
-    const onPointerMove = (e: PointerEvent) => {
+    const onPointerMove = (event: PointerEvent) => {
       if (!isDragging.current) return;
-      const world = worldContainerRef.current;
-      if (!world) return;
-      world.x += e.clientX - dragStart.current.x;
-      world.y += e.clientY - dragStart.current.y;
-      dragStart.current = { x: e.clientX, y: e.clientY };
+      world.x += event.clientX - dragStart.current.x;
+      world.y += event.clientY - dragStart.current.y;
+      dragStart.current = { x: event.clientX, y: event.clientY };
+      clampWorldPosition(world, app);
+      syncCameraStore(world);
     };
 
     const onPointerUp = () => {
       isDragging.current = false;
     };
 
-    const onClick = (e: MouseEvent) => {
-      const world = worldContainerRef.current;
-      if (!world) return;
+    const onClick = (event: MouseEvent) => {
+      const rect = element.getBoundingClientRect();
+      const localX = (event.clientX - rect.left - world.x) / world.scale.x;
+      const localY = (event.clientY - rect.top - world.y) / world.scale.y;
+      const clicked = pickVillagerAtScreenPoint(useGameStore.getState().villagers, localX, localY, ISO);
 
-      const rect = el.getBoundingClientRect();
-      const localX = (e.clientX - rect.left - world.x) / world.scale.x;
-      const localY = (e.clientY - rect.top - world.y) / world.scale.y;
-      const tileX = localX / TILE;
-      const tileY = localY / TILE;
+      if (clicked) {
+        useUIStore.getState().selectVillager(clicked.profile.id);
+        return;
+      }
 
-      const { villagers } = useGameStore.getState();
-      const clicked = villagers.find((v) => {
-        return Math.abs(v.state.x - tileX) < 0.8 && Math.abs(v.state.y - tileY) < 0.8;
-      });
-
-      useUIStore.getState().selectVillager(clicked?.profile.id ?? null);
+      const projectedTile = screenToGrid(localX, localY, ISO);
+      if (
+        projectedTile.x >= 0 &&
+        projectedTile.y >= 0 &&
+        projectedTile.x < MAP_DATA.width &&
+        projectedTile.y < MAP_DATA.height
+      ) {
+        useUIStore.getState().selectVillager(null);
+      }
     };
 
-    el.addEventListener('wheel', onWheel, { passive: false });
-    el.addEventListener('pointerdown', onPointerDown);
-    el.addEventListener('pointermove', onPointerMove);
-    el.addEventListener('pointerup', onPointerUp);
-    el.addEventListener('click', onClick);
+    const onDoubleClick = (event: MouseEvent) => {
+      event.preventDefault();
+      const rect = element.getBoundingClientRect();
+      const pointerX = event.clientX - rect.left;
+      const pointerY = event.clientY - rect.top;
+      const newScale = clamp(world.scale.x * 1.45, 0.55, 2.25);
+      zoomWorldAtScreenPoint(world, app, pointerX, pointerY, newScale, true);
+    };
+
+    const onResize = () => {
+      clampWorldPosition(world, app);
+      syncCameraStore(world);
+    };
+
+    element.addEventListener('wheel', onWheel, { passive: false });
+    element.addEventListener('pointerdown', onPointerDown);
+    element.addEventListener('pointermove', onPointerMove);
+    window.addEventListener('pointerup', onPointerUp);
+    element.addEventListener('click', onClick);
+    element.addEventListener('dblclick', onDoubleClick);
+    window.addEventListener('resize', onResize);
 
     return () => {
-      el.removeEventListener('wheel', onWheel);
-      el.removeEventListener('pointerdown', onPointerDown);
-      el.removeEventListener('pointermove', onPointerMove);
-      el.removeEventListener('pointerup', onPointerUp);
-      el.removeEventListener('click', onClick);
+      element.removeEventListener('wheel', onWheel);
+      element.removeEventListener('pointerdown', onPointerDown);
+      element.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('pointerup', onPointerUp);
+      element.removeEventListener('click', onClick);
+      element.removeEventListener('dblclick', onDoubleClick);
+      window.removeEventListener('resize', onResize);
     };
-  }, []);
+  }, [ready]);
 
-  return <div ref={canvasRef} className="w-full h-full" />;
+  return <div ref={canvasRef} className="h-full w-full" />;
 }
 
-function getTerrain(x: number, y: number): TerrainType {
-  if (y < 0 || y >= MAP_DATA.height || x < 0 || x >= MAP_DATA.width) return 'grass';
-  return MAP_DATA.terrainGrid[y]?.[x] ?? 'grass';
-}
-
-function findWangTile(
-  meta: { tiles: Array<{ corners: Record<string, string>; bounding_box: { x: number; y: number; width: number; height: number } }> },
-  ne: string, nw: string, se: string, sw: string,
-): { x: number; y: number; width: number; height: number } | null {
-  for (const tile of meta.tiles) {
-    if (tile.corners.NE === ne && tile.corners.NW === nw &&
-        tile.corners.SE === se && tile.corners.SW === sw) {
-      return tile.bounding_box;
-    }
+function destroyChildren(container: Container) {
+  while (container.children.length > 0) {
+    const child = container.children[0]!;
+    container.removeChild(child);
+    child.destroy({ children: true });
   }
-  return null;
-}
-
-const tileTexCache: Map<string, Texture> = new Map();
-
-const cachedStyles = {
-  buildingLabel: new TextStyle({ fontSize: 9, fill: 0xffffff, fontFamily: 'monospace', dropShadow: { color: 0x000000, distance: 1, alpha: 0.8 } }),
-  villagerName: new TextStyle({ fontSize: 9, fill: 0xffffff, fontFamily: 'monospace' }),
-  villagerNameBold: new TextStyle({ fontSize: 9, fill: 0xffffff, fontFamily: 'monospace', fontWeight: 'bold' }),
-  villagerAction: new TextStyle({ fontSize: 8, fill: 0xcccccc, fontFamily: 'monospace' }),
-  bubbleText: new TextStyle({ fontSize: 8, fill: 0x1a1a2e, fontFamily: '"Press Start 2P", "Courier New", monospace', wordWrap: true, wordWrapWidth: 130, lineHeight: 14, letterSpacing: -0.5 }),
-  mapLabel: new TextStyle({ fontSize: 10, fill: 0xffffff, fontFamily: 'monospace', dropShadow: { color: 0x000000, distance: 1, alpha: 0.8 } }),
-};
-
-function drawTileFromSheet(
-  container: Container,
-  sheetTex: Texture,
-  box: { x: number; y: number; width: number; height: number },
-  px: number, py: number,
-) {
-  const cacheKey = `${sheetTex.uid}_${box.x}_${box.y}_${box.width}_${box.height}`;
-  let tileTex = tileTexCache.get(cacheKey);
-  if (!tileTex) {
-    const frame = new Rectangle(box.x, box.y, box.width, box.height);
-    tileTex = new Texture({ source: sheetTex.source, frame });
-    tileTexCache.set(cacheKey, tileTex);
-  }
-  const sprite = new Sprite(tileTex);
-  sprite.x = px;
-  sprite.y = py;
-  sprite.width = TILE;
-  sprite.height = TILE;
-  container.addChild(sprite);
-}
-
-function findFullTile(meta: typeof tilesetMeta[string], type: 'upper' | 'lower') {
-  return meta?.tiles.find((t) =>
-    t.corners.NE === type && t.corners.NW === type && t.corners.SE === type && t.corners.SW === type,
-  )?.bounding_box ?? null;
-}
-
-function drawMap(container: Container) {
-  const waterGrassTex = tilesetTextures['water_grass'];
-  const waterGrassMeta = tilesetMeta['water_grass'];
-  const grassCobbleTex = tilesetTextures['grass_cobble'];
-  const grassCobbleMeta = tilesetMeta['grass_cobble'];
-  const grassDirtTex = tilesetTextures['grass_dirt'];
-  const grassDirtMeta = tilesetMeta['grass_dirt'];
-
-  const hasWaterTiles = !!(waterGrassTex && waterGrassMeta?.tiles);
-  const hasCobbleTiles = !!(grassCobbleTex && grassCobbleMeta?.tiles);
-  const hasDirtTiles = !!(grassDirtTex && grassDirtMeta?.tiles);
-
-  const grassBox = hasWaterTiles ? findFullTile(waterGrassMeta, 'upper') : null;
-  const waterBox = hasWaterTiles ? findFullTile(waterGrassMeta, 'lower') : null;
-  const cobbleBox = hasCobbleTiles ? findFullTile(grassCobbleMeta, 'upper') : null;
-  const dirtBox = hasDirtTiles ? findFullTile(grassDirtMeta, 'upper') : null;
-
-  for (let y = 0; y < MAP_DATA.height; y++) {
-    for (let x = 0; x < MAP_DATA.width; x++) {
-      const px = x * TILE;
-      const py = y * TILE;
-      const terrain = getTerrain(x, y);
-
-      let drawn = false;
-
-      if (terrain === 'water' && hasWaterTiles && waterBox) {
-        const ne = getTerrain(x + 1, y - 1) === 'water' ? 'lower' : 'upper';
-        const nw = getTerrain(x - 1, y - 1) === 'water' ? 'lower' : 'upper';
-        const se = getTerrain(x + 1, y + 1) === 'water' ? 'lower' : 'upper';
-        const sw = getTerrain(x - 1, y + 1) === 'water' ? 'lower' : 'upper';
-
-        const hasAnyGrass = ne === 'upper' || nw === 'upper' || se === 'upper' || sw === 'upper';
-
-        if (hasAnyGrass) {
-          const box = findWangTile(waterGrassMeta, ne, nw, se, sw);
-          if (box) {
-            drawTileFromSheet(container, waterGrassTex, box, px, py);
-            drawn = true;
-          }
-        }
-
-        if (!drawn) {
-          drawTileFromSheet(container, waterGrassTex, waterBox, px, py);
-          drawn = true;
-        }
-      }
-
-      if (terrain === 'dirt') {
-        if (grassBox && waterGrassTex) {
-          drawTileFromSheet(container, waterGrassTex, grassBox, px, py);
-        }
-        if (dirtBox && grassDirtTex) {
-          drawTileFromSheet(container, grassDirtTex, dirtBox, px, py);
-        }
-
-        const isDirtOrCobble = (t: TerrainType) => t === 'dirt' || t === 'cobble';
-        const blend = new Graphics();
-        const bc = 0x4a7c59;
-        const bw = 3;
-        const ba = 0.5;
-        if (!isDirtOrCobble(getTerrain(x, y - 1))) blend.rect(px, py, TILE, bw).fill({ color: bc, alpha: ba });
-        if (!isDirtOrCobble(getTerrain(x, y + 1))) blend.rect(px, py + TILE - bw, TILE, bw).fill({ color: bc, alpha: ba });
-        if (!isDirtOrCobble(getTerrain(x - 1, y))) blend.rect(px, py, bw, TILE).fill({ color: bc, alpha: ba });
-        if (!isDirtOrCobble(getTerrain(x + 1, y))) blend.rect(px + TILE - bw, py, bw, TILE).fill({ color: bc, alpha: ba });
-        container.addChild(blend);
-        drawn = true;
-      }
-
-      if (terrain === 'cobble') {
-        const isUnderBuilding = MAP_DATA.buildings.some(
-          (b) => x >= b.x && x < b.x + b.w && y >= b.y && y < b.y + b.h && buildingTextures[b.id],
-        );
-
-        if (isUnderBuilding) {
-          if (grassBox && waterGrassTex) {
-            drawTileFromSheet(container, waterGrassTex, grassBox, px, py);
-          } else {
-            const g = new Graphics();
-            g.rect(px, py, TILE, TILE).fill({ color: 0x4a7c59 });
-            container.addChild(g);
-          }
-          drawn = true;
-        } else if (cobbleBox && grassCobbleTex) {
-          if (grassBox && waterGrassTex) {
-            drawTileFromSheet(container, waterGrassTex, grassBox, px, py);
-          }
-          drawTileFromSheet(container, grassCobbleTex, cobbleBox, px, py);
-
-          const isCobble = (t: TerrainType) => t === 'cobble' || t === 'dirt';
-          const blend = new Graphics();
-          const bc = 0x4a7c59;
-          const bw = 3;
-          const ba = 0.4;
-          if (!isCobble(getTerrain(x, y - 1))) blend.rect(px, py, TILE, bw).fill({ color: bc, alpha: ba });
-          if (!isCobble(getTerrain(x, y + 1))) blend.rect(px, py + TILE - bw, TILE, bw).fill({ color: bc, alpha: ba });
-          if (!isCobble(getTerrain(x - 1, y))) blend.rect(px, py, bw, TILE).fill({ color: bc, alpha: ba });
-          if (!isCobble(getTerrain(x + 1, y))) blend.rect(px + TILE - bw, py, bw, TILE).fill({ color: bc, alpha: ba });
-          container.addChild(blend);
-          drawn = true;
-        }
-      }
-
-      if (terrain === 'bridge' && bridgeTexture) {
-        if (grassBox && waterGrassTex) {
-          drawTileFromSheet(container, waterGrassTex, grassBox, px, py);
-        }
-        const bs = new Sprite(bridgeTexture);
-        bs.x = px;
-        bs.y = py;
-        bs.width = TILE;
-        bs.height = TILE;
-        container.addChild(bs);
-        drawn = true;
-      }
-
-      if (!drawn) {
-        if ((terrain === 'grass' || terrain === 'dirt') && grassBox && waterGrassTex) {
-          drawTileFromSheet(container, waterGrassTex, grassBox, px, py);
-          if (terrain === 'dirt' && dirtBox && grassDirtTex) {
-            drawTileFromSheet(container, grassDirtTex, dirtBox, px, py);
-          }
-          drawn = true;
-        }
-      }
-
-      if (!drawn) {
-        const fallbackColors: Record<string, number> = {
-          water: 0x2471a3,
-          cobble: 0x9e8c6c,
-          dirt: 0x8b7355,
-          grass: 0x4a7c59,
-          bridge: 0x8b6914,
-        };
-        const color = fallbackColors[terrain] ?? 0x4a7c59;
-        const g = new Graphics();
-        g.rect(px, py, TILE, TILE).fill({ color });
-        container.addChild(g);
-      }
-    }
-  }
-
-  for (const b of MAP_DATA.buildings) {
-    const hasBuildingSprite = buildingTextures[b.id];
-    if (!hasBuildingSprite) {
-      const label = new Text({ text: b.label, style: cachedStyles.mapLabel });
-      label.x = b.x * TILE + (b.w * TILE) / 2;
-      label.y = b.y * TILE + (b.h * TILE) / 2;
-      label.anchor.set(0.5);
-      container.addChild(label);
-    }
-  }
-}
-
-function drawDecorations(container: Container) {
-  for (const dec of MAP_DATA.decorations) {
-    const tex = decorationTextures[dec.sprite];
-    if (!tex) continue;
-    const sprite = new Sprite(tex);
-    sprite.x = dec.x * TILE;
-    sprite.y = dec.y * TILE;
-    sprite.width = dec.w * TILE;
-    sprite.height = dec.h * TILE;
-    container.addChild(sprite);
-  }
-}
-
-function drawBuildings(container: Container, villagers: Villager[]) {
-  for (const b of MAP_DATA.buildings) {
-    const tex = buildingTextures[b.id];
-    if (!tex) continue;
-
-    const sprite = new Sprite(tex);
-    sprite.x = b.x * TILE;
-    sprite.y = b.y * TILE;
-    sprite.width = b.w * TILE;
-    sprite.height = b.h * TILE;
-
-    const hasVillagerInside = villagers.some((v) => {
-      const vx = v.state.x;
-      const vy = v.state.y;
-      return vx >= b.x && vx < b.x + b.w && vy >= b.y && vy < b.y + b.h;
-    });
-
-    sprite.alpha = hasVillagerInside ? 0.35 : 0.9;
-    container.addChild(sprite);
-
-    const label = new Text({ text: b.label, style: cachedStyles.buildingLabel });
-    label.x = b.x * TILE + (b.w * TILE) / 2;
-    label.y = b.y * TILE + 4;
-    label.anchor.set(0.5, 0);
-    label.alpha = hasVillagerInside ? 0.5 : 1;
-    container.addChild(label);
-  }
-}
-
-function drawVillager(
-  container: Container,
-  labelsContainer: Container,
-  villager: Villager,
-  isSelected: boolean,
-  now: number,
-) {
-  const { x, y } = villager.state;
-  const px = x * TILE;
-  const py = y * TILE;
-  const id = villager.profile.id;
-  const facing = villager.state.facing;
-  const dirKey = DIRECTION_MAP[facing] ?? 'south';
-  const isWalking = villager.state.isMoving;
-
-  const shadow = new Graphics();
-  shadow.ellipse(px, py + TILE * 0.35, TILE * 0.35, TILE * 0.12).fill({ color: 0x000000, alpha: 0.2 });
-  container.addChild(shadow);
-
-  if (isSelected) {
-    const selection = new Graphics();
-    selection.circle(px, py, TILE * 0.6).fill({ color: 0xffffff, alpha: 0.25 });
-    selection.circle(px, py, TILE * 0.6).stroke({ color: 0xffffff, width: 1, alpha: 0.5 });
-    container.addChild(selection);
-  }
-
-  let texture: Texture | null = null;
-
-  if (isWalking) {
-    texture = getWalkFrame(id, dirKey, now);
-  }
-
-  if (!texture) {
-    texture = spriteTextures[`${id}_${dirKey}`] ?? null;
-  }
-
-  if (texture) {
-    const sprite = new Sprite(texture);
-    sprite.anchor.set(0.5, 0.5);
-    sprite.x = px;
-    sprite.y = py;
-    sprite.width = TILE * 1.4;
-    sprite.height = TILE * 1.4;
-    container.addChild(sprite);
-  } else {
-    const color = VILLAGER_COLORS[id] ?? 0xffffff;
-    const g = new Graphics();
-    g.circle(px, py, TILE * 0.4).fill({ color });
-    g.circle(px, py, TILE * 0.4).stroke({ color: 0x000000, width: 1 });
-    container.addChild(g);
-  }
-
-  const nameLabel = new Text({ text: villager.profile.name, style: isSelected ? cachedStyles.villagerNameBold : cachedStyles.villagerName });
-  nameLabel.x = px;
-  nameLabel.y = py - TILE * 0.85;
-  nameLabel.anchor.set(0.5);
-  labelsContainer.addChild(nameLabel);
-
-  if (isSelected && villager.state.currentAction) {
-    const actionLabel = ACTION_LABELS[villager.state.currentAction.type] ?? '';
-    const actionText = new Text({ text: actionLabel, style: cachedStyles.villagerAction });
-    actionText.x = px;
-    actionText.y = py + TILE * 0.8;
-    actionText.anchor.set(0.5);
-    labelsContainer.addChild(actionText);
-  }
-}
-
-function updateLighting(overlay: Graphics, hour: number) {
-  overlay.clear();
-
-  let color: number;
-  let alpha: number;
-
-  if (hour >= 5 && hour < 7) {
-    color = 0xFFCC88;
-    alpha = 0.15;
-  } else if (hour >= 7 && hour < 16) {
-    color = 0x000000;
-    alpha = 0.0;
-  } else if (hour >= 16 && hour < 19) {
-    color = 0xFF8844;
-    const t = (hour - 16) / 3;
-    alpha = t * 0.25;
-  } else if (hour >= 19 && hour < 21) {
-    color = 0x332255;
-    const t = (hour - 19) / 2;
-    alpha = 0.2 + t * 0.25;
-  } else {
-    color = 0x1a1a3e;
-    alpha = 0.45;
-  }
-
-  if (alpha > 0) {
-    overlay.rect(0, 0, MAP_DATA.width * TILE, MAP_DATA.height * TILE).fill({ color, alpha });
-  }
-}
-
-function drawSpeechBubble(
-  container: Container,
-  villager: Villager,
-  text: string,
-  alpha: number,
-) {
-  const px = villager.state.x * TILE;
-  const py = villager.state.y * TILE;
-
-  const textObj = new Text({ text, style: cachedStyles.bubbleText });
-  textObj.anchor.set(0.5, 1);
-
-  const textWidth = textObj.width;
-  const textHeight = textObj.height;
-  const padX = 8;
-  const padY = 6;
-  const bw = 2;
-  const bubbleW = textWidth + padX * 2;
-  const bubbleH = textHeight + padY * 2;
-  const bubbleX = px - bubbleW / 2;
-  const bubbleY = py - TILE * 1.4 - bubbleH;
-
-  const bg = new Graphics();
-  bg.alpha = alpha;
-
-  // 8-bit style: sharp corners with pixel border
-  bg.rect(bubbleX + bw, bubbleY, bubbleW - bw * 2, bubbleH).fill({ color: 0xf8f8f0 });
-  bg.rect(bubbleX, bubbleY + bw, bubbleW, bubbleH - bw * 2).fill({ color: 0xf8f8f0 });
-
-  // Pixel border — top
-  bg.rect(bubbleX + bw, bubbleY, bubbleW - bw * 2, bw).fill({ color: 0x222034 });
-  // Bottom
-  bg.rect(bubbleX + bw, bubbleY + bubbleH - bw, bubbleW - bw * 2, bw).fill({ color: 0x222034 });
-  // Left
-  bg.rect(bubbleX, bubbleY + bw, bw, bubbleH - bw * 2).fill({ color: 0x222034 });
-  // Right
-  bg.rect(bubbleX + bubbleW - bw, bubbleY + bw, bw, bubbleH - bw * 2).fill({ color: 0x222034 });
-
-  // Pixel pointer (staircase style)
-  const ptX = px - 3;
-  const ptY = bubbleY + bubbleH;
-  bg.rect(ptX, ptY, 6, bw).fill({ color: 0xf8f8f0 });
-  bg.rect(ptX + 1, ptY + bw, 4, bw).fill({ color: 0xf8f8f0 });
-  bg.rect(ptX + 2, ptY + bw * 2, 2, bw).fill({ color: 0xf8f8f0 });
-  // Pointer border
-  bg.rect(ptX - bw, ptY, bw, bw).fill({ color: 0x222034 });
-  bg.rect(ptX + 6, ptY, bw, bw).fill({ color: 0x222034 });
-  bg.rect(ptX - 1, ptY + bw, bw, bw).fill({ color: 0x222034 });
-  bg.rect(ptX + 5, ptY + bw, bw, bw).fill({ color: 0x222034 });
-  bg.rect(ptX, ptY + bw * 2, bw, bw).fill({ color: 0x222034 });
-  bg.rect(ptX + 4, ptY + bw * 2, bw, bw).fill({ color: 0x222034 });
-  bg.rect(ptX + 1, ptY + bw * 3, 4, bw).fill({ color: 0x222034 });
-
-  container.addChild(bg);
-
-  textObj.x = px;
-  textObj.y = bubbleY + bubbleH - padY;
-  textObj.alpha = alpha;
-  container.addChild(textObj);
 }

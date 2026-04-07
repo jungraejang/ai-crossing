@@ -1,5 +1,5 @@
-import type { VillagerState, Direction } from '@ai-crossing/shared';
-import { MOVEMENT_SPEED_TILES_PER_SECOND } from '@ai-crossing/shared';
+import type { VillagerState } from '@ai-crossing/shared';
+import { MOVEMENT_SPEED_TILES_PER_SECOND, getDirectionFromDelta } from '@ai-crossing/shared';
 import { findPath } from '@ai-crossing/simulation';
 
 export function updateMovement(state: VillagerState, dt: number): VillagerState {
@@ -11,12 +11,7 @@ export function updateMovement(state: VillagerState, dt: number): VillagerState 
   const dy = next.y - state.y;
   const dist = Math.sqrt(dx * dx + dy * dy);
 
-  let facing: Direction = state.facing;
-  if (Math.abs(dx) > Math.abs(dy)) {
-    facing = dx > 0 ? 'right' : 'left';
-  } else if (dy !== 0) {
-    facing = dy > 0 ? 'down' : 'up';
-  }
+  const facing = getDirectionFromDelta(dx, dy, state.facing);
 
   if (dist <= speed) {
     const remaining = state.path.slice(1);

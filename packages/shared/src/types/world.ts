@@ -48,6 +48,9 @@ export interface TileMapData {
   width: number;
   height: number;
   tileSize: number;
+  projection?: MapProjection;
+  tileScreenWidth?: number;
+  tileScreenHeight?: number;
   layers: TileLayer[];
   locations: GameLocation[];
 }
@@ -59,6 +62,8 @@ export interface TileLayer {
   height: number;
   visible: boolean;
 }
+
+export type MapProjection = 'orthogonal' | 'isometric';
 
 export type TimeOfDay = 'dawn' | 'morning' | 'afternoon' | 'evening' | 'night';
 

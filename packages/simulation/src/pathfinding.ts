@@ -8,6 +8,25 @@ interface GridNode {
   walkable: boolean;
 }
 
+interface GridDirection {
+  dx: number;
+  dy: number;
+  cost: number;
+}
+
+const SQRT2 = Math.SQRT2;
+
+const DIRECTIONS: GridDirection[] = [
+  { dx: 0, dy: -1, cost: 1 },
+  { dx: 1, dy: 0, cost: 1 },
+  { dx: 0, dy: 1, cost: 1 },
+  { dx: -1, dy: 0, cost: 1 },
+  { dx: 1, dy: -1, cost: SQRT2 },
+  { dx: 1, dy: 1, cost: SQRT2 },
+  { dx: -1, dy: 1, cost: SQRT2 },
+  { dx: -1, dy: -1, cost: SQRT2 },
+];
+
 let cachedWalkableMatrix: number[][] | null = null;
 let cachedWidth = 0;
 let cachedHeight = 0;
@@ -84,13 +103,6 @@ function astar(
   const openSet = new Set<GridNode>([start]);
   const closedSet = new Set<GridNode>();
 
-  const directions = [
-    { dx: 0, dy: -1 },
-    { dx: 1, dy: 0 },
-    { dx: 0, dy: 1 },
-    { dx: -1, dy: 0 },
-  ];
-
   let iterations = 0;
   const maxIterations = width * height * 2;
 
@@ -110,16 +122,19 @@ function astar(
     openSet.delete(current);
     closedSet.add(current);
 
-    for (const dir of directions) {
+    for (const dir of DIRECTIONS) {
       const nx = current.x + dir.dx;
       const ny = current.y + dir.dy;
 
       if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue;
+      if (dir.dx !== 0 && dir.dy !== 0 && !canTraverseDiagonal(current.x, current.y, dir.dx, dir.dy, matrix)) {
+        continue;
+      }
 
       const neighbor = nodes[ny]![nx]!;
       if (!neighbor.walkable || closedSet.has(neighbor)) continue;
 
-      const tentativeG = current.g + 1;
+      const tentativeG = current.g + dir.cost;
       if (tentativeG < neighbor.g) {
         neighbor.parent = current;
         neighbor.g = tentativeG;
@@ -134,7 +149,9 @@ function astar(
 }
 
 function heuristic(x1: number, y1: number, x2: number, y2: number): number {
-  return Math.abs(x1 - x2) + Math.abs(y1 - y2);
+  const dx = Math.abs(x1 - x2);
+  const dy = Math.abs(y1 - y2);
+  return Math.max(dx, dy) + (SQRT2 - 1) * Math.min(dx, dy);
 }
 
 function reconstructPath(node: GridNode): Array<{ x: number; y: number }> {
@@ -169,6 +186,18 @@ function findNearestWalkable(
     }
   }
   return null;
+}
+
+function canTraverseDiagonal(
+  x: number,
+  y: number,
+  dx: number,
+  dy: number,
+  matrix: number[][],
+): boolean {
+  const horizontal = matrix[y]?.[x + dx] ?? 1;
+  const vertical = matrix[y + dy]?.[x] ?? 1;
+  return horizontal === 0 && vertical === 0;
 }
 
 export function isWalkable(x: number, y: number): boolean {

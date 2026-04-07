@@ -22,7 +22,16 @@ export const moodSchema = z.enum([
   'lonely',
 ]);
 
-export const directionSchema = z.enum(['up', 'down', 'left', 'right']);
+export const directionSchema = z.enum([
+  'north',
+  'northEast',
+  'east',
+  'southEast',
+  'south',
+  'southWest',
+  'west',
+  'northWest',
+]);
 
 export const actionTypeSchema = z.enum([
   'idle',
