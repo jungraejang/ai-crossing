@@ -249,12 +249,13 @@ export class VillagerAgent {
         return { currentAction: { type: 'socializing', startedAt: Date.now(), duration: 10, gameTimeElapsed: 0 } };
       case 'speak': {
         if (result.speech) {
+          const bubbleDuration = Math.max(3800, Math.min(7800, 2600 + result.speech.length * 55));
           useGameStore.getState().addSpeechBubble({
             id: `agent_speak_${Date.now()}_${this.villagerId}`,
             villagerId: this.villagerId,
             text: result.speech,
             createdAt: Date.now(),
-            expiresAt: Date.now() + Math.max(2500, Math.min(5000, 1500 + result.speech.length * 40)),
+            expiresAt: Date.now() + bubbleDuration,
           });
         }
         return null;

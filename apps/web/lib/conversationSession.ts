@@ -11,10 +11,11 @@ export class ConversationSession {
   private sessionKey: string;
   private history: Array<{ speaker: string; text: string }> = [];
   private maxTurns: number;
-  private currentTurn = 0;
   private isRunning = false;
-  private basePauseMs = 1500;
+  private basePauseMs = 350;
   private workMode: boolean;
+  private pendingTurnPromise: Promise<AgentThinkResult | null> | null = null;
+  private pendingSpeakerId: string | null = null;
 
   constructor(villagerA: Villager, villagerB: Villager, maxTurns = 5, workMode = false) {
     this.agentAId = villagerA.profile.id;
@@ -68,86 +69,149 @@ export class ConversationSession {
       if (!this.isRunning) break;
 
       const speakerId = speakers[i % 2]!;
-      const agent = getAgent(speakerId);
-      if (!agent) break;
+      const turn = this.buildTurnContext(speakerId, i);
+      if (!turn) break;
 
-      const store = useGameStore.getState();
-      const villager = store.villagers.find((v) => v.profile.id === speakerId);
-      const other = store.villagers.find((v) => v.profile.id === (speakerId === this.agentAId ? this.agentBId : this.agentAId));
-      if (!villager || !other) break;
+      const result = await this.resolveTurnResult(turn);
+      if (!result) break;
 
-      const perception = agent.perceive(store.villagers, store.world, []);
+      this.prefetchNextTurn(speakers[(i + 1) % 2]!, i + 1);
 
-      let context: string;
-      if (this.workMode) {
-        if (i === 0) {
-          context = `You are working alongside ${other.profile.name} (${other.profile.job}) at ${perception.currentLocation}. Say something SHORT and work-related — a quick request, observation about the task, or brief comment about the work. One short sentence only. Do NOT start a full conversation, just a quick work exchange.`;
-        } else {
-          const lastLine = this.history[this.history.length - 1];
-          context = `${other.profile.name} just said while working: "${lastLine?.text ?? '...'}" — give a quick work-related reply. One short sentence. Keep working.`;
-        }
-      } else {
-        if (i === 0) {
-          context = `You just ran into ${other.profile.name} (${other.profile.job}) at ${perception.currentLocation}. Start a conversation — say something only YOU would say. Be specific to this moment.`;
-        } else {
-          const lastLine = this.history[this.history.length - 1];
-          context = `You are chatting with ${other.profile.name}. They just said: "${lastLine?.text ?? '...'}" — respond naturally in your own voice.`;
-          if (i >= this.maxTurns - 1) {
-            context += ' Wrap up with a farewell that fits your personality.';
-          }
-        }
-      }
-
-      const input = agent.buildThinkInput(villager, perception, context, this.history);
-
-      let result: AgentThinkResult;
-      try {
-        result = await callRemoteLLM(input);
-      } catch {
-        break;
-      }
-
-      if (result.action === 'end_conversation') {
-        if (result.speech && result.speech.length > 2) {
-          const dur = this.showBubble(speakerId, result.speech);
-          this.history.push({ speaker: villager.profile.name, text: result.speech });
-          await sleep(dur + this.basePauseMs);
-        }
-        break;
-      }
-
-      const speech = result.speech && result.speech.length > 2 ? result.speech : null;
-      let displayDuration = 0;
-      if (speech) {
-        displayDuration = this.showBubble(speakerId, speech);
-        this.history.push({ speaker: villager.profile.name, text: speech });
-      }
-
-      agent.reflect(result, villager);
-
-      if (result.shouldRemember && result.memoryNote) {
-        const otherAgent = getAgent(speakerId === this.agentAId ? this.agentBId : this.agentAId);
-        otherAgent?.episodicMemory.add({
-          id: `convo_mem_${Date.now()}_${other.profile.id}`,
-          villagerId: other.profile.id,
-          type: 'episodic',
-          importance: 0.7,
-          summary: `${villager.profile.name} said: "${speech}"`,
-          relatedActorIds: [speakerId],
-          tags: ['conversation'],
-          timestamp: Date.now(),
-          gameDay: store.world.time.day,
-          emotionalTone: villager.state.mood,
-          location: villager.state.currentLocation,
-        });
-      }
-
-      await sleep(displayDuration + this.basePauseMs);
+      const turnComplete = await this.applyTurnResult(turn, result);
+      if (!turnComplete) break;
     }
   }
 
+  private buildTurnContext(speakerId: string, turnIndex: number): TurnContext | null {
+    const agent = getAgent(speakerId);
+    if (!agent) return null;
+
+    const store = useGameStore.getState();
+    const villager = store.villagers.find((v) => v.profile.id === speakerId);
+    const otherId = speakerId === this.agentAId ? this.agentBId : this.agentAId;
+    const other = store.villagers.find((v) => v.profile.id === otherId);
+    if (!villager || !other) return null;
+
+    const perception = agent.perceive(store.villagers, store.world, []);
+    const context = this.buildTurnPromptContext(turnIndex, perception.currentLocation, other);
+    const input = agent.buildThinkInput(villager, perception, context, this.history);
+
+    return { speakerId, otherId, villager, other, agent, input };
+  }
+
+  private buildTurnPromptContext(
+    turnIndex: number,
+    locationLabel: string,
+    other: Villager,
+  ): string {
+    if (this.workMode) {
+      if (turnIndex === 0) {
+        return `You are working alongside ${other.profile.name} (${other.profile.job}) at ${locationLabel}. Say something SHORT and work-related — a quick request, observation about the task, or brief comment about the work. One short sentence only. Do NOT start a full conversation, just a quick work exchange.`;
+      }
+
+      const lastLine = this.history[this.history.length - 1];
+      return `${other.profile.name} just said while working: "${lastLine?.text ?? '...'}" — give a quick work-related reply. One short sentence. Keep working.`;
+    }
+
+    if (turnIndex === 0) {
+      return `You just ran into ${other.profile.name} (${other.profile.job}) at ${locationLabel}. Start a conversation — say something only YOU would say. Be specific to this moment.`;
+    }
+
+    const lastLine = this.history[this.history.length - 1];
+    let context = `You are chatting with ${other.profile.name}. They just said: "${lastLine?.text ?? '...'}" — respond naturally in your own voice.`;
+    if (turnIndex >= this.maxTurns - 1) {
+      context += ' Wrap up with a farewell that fits your personality.';
+    }
+    return context;
+  }
+
+  private async resolveTurnResult(turn: TurnContext): Promise<AgentThinkResult | null> {
+    if (this.pendingTurnPromise && this.pendingSpeakerId === turn.speakerId) {
+      const promise = this.pendingTurnPromise;
+      this.pendingTurnPromise = null;
+      this.pendingSpeakerId = null;
+      const prefetched = await promise;
+      if (prefetched) {
+        return prefetched;
+      }
+    }
+
+    return this.requestTurn(turn.input);
+  }
+
+  private prefetchNextTurn(nextSpeakerId: string, nextTurnIndex: number): void {
+    if (!this.isRunning) return;
+    if (nextTurnIndex >= this.maxTurns) return;
+    if (this.pendingTurnPromise || this.pendingSpeakerId) return;
+
+    const nextTurn = this.buildTurnContext(nextSpeakerId, nextTurnIndex);
+    if (!nextTurn) return;
+
+    this.pendingSpeakerId = nextSpeakerId;
+    this.pendingTurnPromise = this.requestTurn(nextTurn.input)
+      .catch(() => null)
+      .finally(() => {
+        if (this.pendingSpeakerId !== nextSpeakerId) return;
+      });
+  }
+
+  private async requestTurn(input: AgentThinkInput): Promise<AgentThinkResult | null> {
+    try {
+      return await callRemoteLLM(input);
+    } catch {
+      return null;
+    }
+  }
+
+  private async applyTurnResult(turn: TurnContext, result: AgentThinkResult): Promise<boolean> {
+    const speech = result.speech && result.speech.length > 2 ? result.speech : null;
+    let displayDuration = 0;
+
+    if (speech) {
+      displayDuration = this.showBubble(turn.speakerId, speech);
+      this.history.push({ speaker: turn.villager.profile.name, text: speech });
+    }
+
+    turn.agent.reflect(result, turn.villager);
+    this.rememberConversationMoment(turn, result, speech);
+
+    if (result.action === 'end_conversation') {
+      await sleep(displayDuration + this.basePauseMs);
+      return false;
+    }
+
+    await sleep(displayDuration + this.basePauseMs);
+    return true;
+  }
+
+  private rememberConversationMoment(
+    turn: TurnContext,
+    result: AgentThinkResult,
+    speech: string | null,
+  ): void {
+    if (!result.shouldRemember || !result.memoryNote || !speech) return;
+
+    const store = useGameStore.getState();
+    const otherAgent = getAgent(turn.otherId);
+    otherAgent?.episodicMemory.add({
+      id: `convo_mem_${Date.now()}_${turn.other.profile.id}`,
+      villagerId: turn.other.profile.id,
+      type: 'episodic',
+      importance: 0.7,
+      summary: `${turn.villager.profile.name} said: "${speech}"`,
+      relatedActorIds: [turn.speakerId],
+      tags: ['conversation'],
+      timestamp: Date.now(),
+      gameDay: store.world.time.day,
+      emotionalTone: turn.villager.state.mood,
+      location: turn.villager.state.currentLocation,
+    });
+  }
+
   private showBubble(villagerId: string, text: string): number {
-    const duration = Math.max(3000, Math.min(8000, 2000 + text.length * 55));
+    const duration = this.workMode
+      ? Math.max(2200, Math.min(4200, 1500 + text.length * 40))
+      : Math.max(3200, Math.min(7600, 2300 + text.length * 58));
     useGameStore.getState().addSpeechBubble({
       id: `convo_${Date.now()}_${villagerId}`,
       villagerId,
@@ -169,9 +233,20 @@ export class ConversationSession {
       agentB.inConversation = false;
       agentB.conversationPartnerId = null;
     }
+    this.pendingTurnPromise = null;
+    this.pendingSpeakerId = null;
     this.isRunning = false;
     activeSessions.delete(this.sessionKey);
   }
+}
+
+interface TurnContext {
+  speakerId: string;
+  otherId: string;
+  villager: Villager;
+  other: Villager;
+  agent: NonNullable<ReturnType<typeof getAgent>>;
+  input: AgentThinkInput;
 }
 
 export function startConversation(villagerA: Villager, villagerB: Villager, workMode = false): void {
